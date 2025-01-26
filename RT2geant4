@@ -1,0 +1,192 @@
+import os
+
+import numpy as np
+
+from rt2.prompt import Prompt
+from rt2.scoring import MeshDensity
+from rt2.algorithm import Affine
+
+
+def printHelp():
+    print("Parameters:      --input    | -i <path>        File name of Geant4 tally    ")
+    print("                 --help     | -h               Print this message           ")
+    print("                 --primary  | -p <number>      /run/beamOn                  ")
+    print("                 --quantity | -q <quantity>    /score/quantity              ")
+    print("                 --type     | -t <type>        /score/create                ")
+    print(" [t == boxMesh]: --boxSize                     /score/mesh/boxSize [cm]     ")
+    print("                 --nBin                        /score/mesh/nBin             ")
+    print("                 --translate <optional>        /score/mesh/translate [cm]   ")
+    
+
+
+# Prompt
+argv = Prompt()["--help", "-h"]
+if argv is not None:
+    printHelp()
+    exit(1)
+
+
+# File name
+argv = Prompt()["--input", "-i"]
+file_name = ""
+if not argv:
+    print("Input path must be specified")
+    printHelp()
+    exit(1)
+else:
+    file_name = argv[0]
+name, ext = os.path.splitext(file_name)
+
+
+# Primary
+argv  = Prompt()["--primary", "-p"]
+nprim = 0
+if not argv:
+    print("Number of the primary must be specified")
+    printHelp()
+    exit(1)
+else:
+    nprim = argv[0]
+    try:
+        nprim = int(float(nprim))
+    except:
+        print("[--primary]: Cannot convert input '{}' to int".format(nprim))
+
+
+# Quantity
+argv  = Prompt()["--quantity", "-q"]
+quant = ""
+if not argv:
+    print("[--quantity]: Quantity must be specified")
+    printHelp()
+    exit(1)
+else:
+    quant = argv[0]
+
+
+if quant == "energyDeposit":
+    pass
+else:
+    print("[--quantity]: Unknown quantity type '{}'".format(quant))
+    printHelp()
+    exit(1)
+
+
+# Type
+argv = Prompt()["--type", "-t"]
+tally_type = ""
+if not argv:
+    print("[--type]: Tally type must be specified")
+    printHelp()
+    exit(1)
+else:
+    tally_type = argv[0]
+
+
+if tally_type == "boxMesh":  # /score/create/boxMesh
+
+    # boxSize
+    argv = Prompt(3)["--boxSize"]
+    if not argv:
+        print("[boxMesh]: boxSize (3) must be specified")
+        printHelp()
+        exit(1)
+    try:
+        size = list(map(float, argv))
+    except:
+        print("[boxMesh --boxSize]: Cannot convert input '{}' to float".format(argv))
+        printHelp()
+        exit(1)
+    size = np.array(size)
+
+    # nBin
+    argv = Prompt(3)["--nBin"]
+    if not argv:
+        print("[boxMesh]: nBin (3) must be specified")
+        printHelp()
+        exit(1)
+    try:
+        nbin = list(map(int, argv))
+    except:
+        print("[boxMesh --nbin]: Cannot convert input '{}' to int".format(argv))
+        printHelp()
+        exit(1)
+    nbin = np.array(nbin)
+
+    # read data
+    data  = np.zeros(nbin)
+    var   = np.zeros(nbin)
+    entry = np.zeros(nbin, dtype=int)
+    with open(file_name) as file:
+        for line in file:
+            if len(line) == 0:
+                continue
+            if line[0] == '#':
+                continue
+            items = line.split(',')
+            ix    = int(items[0])
+            iy    = int(items[1])
+            iz    = int(items[2])
+            part  = float(items[3])
+            p2    = float(items[4])
+            ent   = float(items[5])
+            data[ix, iy, iz]  = part
+            var[ix, iy, iz]   = p2
+            entry[ix, iy, iz] = ent
+             
+    # calculate uncertainty
+    x2 = np.divide(var,  entry, out=np.zeros_like(var),  where=entry!=0)
+    x  = np.divide(data, entry, out=np.zeros_like(data), where=entry!=0)
+
+    stdev = np.divide(x2 - x**2, entry, out=np.zeros_like(x), where=entry!=0)
+    stdev[stdev < 0.0] = 0.0
+    stdev = np.sqrt(stdev)
+
+    unc = np.divide(stdev, x, out=np.zeros_like(x), where=x!=0)
+
+    # normalize data
+    mesh_volume = 2.0 * size / nbin
+    mesh_origin = -size
+    data       /= np.prod(mesh_volume) * nprim
+
+    # prepare meshdensity
+    mdn = MeshDensity("", mode="w")
+
+    affine = Affine(np.array([[mesh_volume[0], 0, 0, mesh_origin[0] + 0.5 * mesh_volume[0]], 
+                              [0, mesh_volume[1], 0, mesh_origin[1] + 0.5 * mesh_volume[1]], 
+                              [0, 0, mesh_volume[2], mesh_origin[2] + 0.5 * mesh_volume[2]], 
+                              [0, 0, 0, 1]]
+                             ))
+
+    mdn.transform(affine)
+
+    mdn._shape[0] = nbin[0]
+    mdn._shape[1] = nbin[1]
+    mdn._shape[2] = nbin[2]
+
+    mdn.name = "boxMesh"
+    mdn.part = "total"
+    mdn.data = data.astype(np.float32)
+    mdn.unc  = unc.astype(np.float32)
+
+    # translate
+    argv = Prompt(3)["--translate"]
+    if argv:
+        try:
+            trans_mat = list(map(int, argv))
+        except:
+            print("[boxMesh --translate]: Cannot convert input '{}' to float".format(argv))
+            printHelp()
+            exit(1)
+    trans_mat = np.array(trans_mat)
+    mdn.translate(trans_mat[0], trans_mat[1], trans_mat[2])
+
+    print("MDN Results")
+    print(mdn)
+    mdn.write("{}.mdn".format(name))
+else:
+    print("[--type]: Unknown tally type '{}'".format(tally_type))
+    printHelp()
+    exit(1)
+
+exit(0)

@@ -1,0 +1,72 @@
+import os
+import shutil
+import subprocess
+
+from rt2.prompt import Prompt
+
+
+def printHelp():
+    print("Parameters: --input   | -i <file>         Source for primary generator           ")
+    print("            --output  | -o <file>         Executable primary generator           ")
+    print("            --clone   | -c                Clone empty source template from origin")
+    print("            --alias   | -a <string>       cmake3 alias [Default=cmake]           ")
+    print("            --help    | -h                Print this message                     ")
+
+
+root_script = os.path.dirname(os.path.realpath(__file__))
+
+
+# Prompt
+argv = Prompt()["--help", "-h"]
+if argv is not None:
+    printHelp()
+    exit(1)
+    
+
+# Clone data
+argv = Prompt()["--clone", "-c"]
+if argv is not None:
+    file_template = os.path.join(root_script, "RT2fsource_template.cpp")
+    shutil.copy(file_template, "source.cpp")
+    exit(1)
+
+
+argv = Prompt()["--input", "-i"]
+inp = ""
+if not argv:
+    print("Input path must be specified")
+    printHelp()
+    exit(1)
+else:
+    inp = argv[0]
+    
+    
+argv   = Prompt()["--output", "-o"]
+output = ""
+if not argv:
+    print("Output must be specified")
+    printHelp()
+    exit(1)
+else:
+    output = argv[0]
+    
+    
+argv = Prompt()["--alias", "-a"]
+out = ""
+if not argv:
+    cmd_cmake = "cmake"
+else:
+    cmd_cmake = argv[0]
+
+file_vcpkg = os.path.join(root_script, "fsource_cache.txt")
+path_vcpkg = ""
+with open(file_vcpkg) as file:
+    for line in file:
+        path_vcpkg = line
+cmd_vcpkg  = "-DVCPKG_PATH={}".format(path_vcpkg)
+cmd_input  = "-DFINPUT={}".format(inp)
+cmd_output = "-DFOUTPUT={}".format(output)
+
+file_cmakelists = os.path.join(root_script, "RT2fsource_CMakeLists.txt")
+shutil.copy(file_cmakelists, "CMakeLists.txt")
+subprocess.Popen([cmd_cmake, ".", cmd_vcpkg, cmd_input, cmd_output])

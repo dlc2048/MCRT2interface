@@ -1,0 +1,84 @@
+from tqdm import tqdm
+import nibabel as nib
+
+from rt2.algorithm import Affine
+from rt2.prompt import Prompt
+from rt2.voxel import Voxel
+
+
+def printHelp():
+    print("Parameters: --input   | -i  <filename>    File for nifti set                  ")
+    print("            --houns   | -ho <filename>    File for hounsfield table           ")
+    print("            --output  | -o  <filename>    File for voxel output               ")
+    print("            --help    | -h                Print this message                  ")
+
+
+# Prompt
+argv = Prompt()["--help", "-h"]
+if argv is not None:
+    printHelp()
+    exit(1)
+
+argv = Prompt()["--input", "-i"]
+nib_path = ""
+if not argv:
+    print("Nifti input must be specified")
+    printHelp()
+    exit(1)
+else:
+    nib_path = argv[0]
+
+argv = Prompt()["--houns", "-ho"]
+houns_path = ""
+if not argv:
+    print("Hounsfield table filename must be specified")
+    printHelp()
+    exit(1)
+else:
+    houns_path = argv[0]
+
+argv = Prompt()["--output", "-o"]
+out_file = argv[0] if argv else nib_path
+out_file = "{}.vxl".format(out_file)
+
+# argv = Prompt()["--dicom", "-d"]
+# write_dicom = argv[0] is not None
+# out_dicom = "{}.dct".format(nib_path)
+
+
+# CT dataset
+ct = nib.load(nib_path)
+aff_mat = ct.affine * 0.1
+aff_mat[-1, -1] = 1.0
+aff = Affine(aff_mat)  # mm to cm
+
+
+# Read hounsfield table
+pair = []
+with open(houns_path) as stream:
+    for line in stream:
+        items = line.split()
+        pair += [[int(items[1]), items[0]]]
+
+# Assign region by HU values
+ct_arr = ct.get_fdata()
+voxel = Voxel(shape=ct_arr.shape)
+voxel.transform(aff)
+
+ceil_last = -9999
+
+print("Assign region")
+for ceil, region in tqdm(pair):
+    if region not in voxel.region():
+        voxel.addRegion(region)
+    if ceil <= ceil_last:  # Check whether HU ceils are sorted in ascending order or not
+        raise ValueError("Hounsfield unit ceil must be sorted in ascending order")
+
+    mask = (ct_arr >= ceil_last) * (ct_arr < ceil)
+    voxel[mask] = region
+    ceil_last = ceil
+
+# Write voxel binary
+voxel.write(out_file)
+
+print("done")

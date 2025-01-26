@@ -1,0 +1,70 @@
+import os
+
+import numpy as np
+
+from rt2.prompt import Prompt
+from rt2.fluka.Data import Usrbin
+from rt2.scoring import MeshDensity
+from rt2.algorithm import Affine
+
+
+def printHelp():
+    print("Parameters: --input   | -i <path>         File name of Fluka tally ")
+    print("            --help    | -h                Print this message       ")
+
+
+# Prompt
+argv = Prompt()["--help", "-h"]
+if argv is not None:
+    printHelp()
+    exit(1)
+
+argv = Prompt()["--input", "-i"]
+file_name = ""
+if not argv:
+    print("Input path must be specified")
+    printHelp()
+    exit(1)
+else:
+    file_name = argv[0]
+
+name, ext = os.path.splitext(file_name)
+
+try:  # USRBIN
+    bnn = Usrbin(file_name)
+    for index, detector in enumerate(bnn.detector):
+        mdn = MeshDensity("", mode="w")
+        
+        affine = Affine(np.array([[detector.dx, 0, 0, detector.xlow + 0.5 * detector.dx], 
+                                  [0, detector.dy, 0, detector.ylow + 0.5 * detector.dy], 
+                                  [0, 0, detector.dz, detector.zlow + 0.5 * detector.dz], 
+                                  [0, 0, 0, 1]]
+                                 ))
+        
+        mdn.transform(affine)
+
+        mdn._shape[0] = detector.nx
+        mdn._shape[1] = detector.ny
+        mdn._shape[2] = detector.nz
+
+        mdn.part = str(detector.score)
+
+        data_byte = bnn.readData(index)
+        stat_byte = bnn.readStat(index)
+
+        mdn.data = np.reshape(np.frombuffer(data_byte, dtype=np.float32),
+                              np.flip(mdn.shape()))
+        mdn.data = np.transpose(mdn.data, axes=(2, 1, 0))
+
+        mdn.unc = np.reshape(np.frombuffer(stat_byte, dtype=np.float32),
+                             np.flip(mdn.shape()))
+        mdn.unc = np.transpose(mdn.unc, axes=(2, 1, 0))
+        mdn.write("{}_{}.mdn".format(name, detector.name))
+        exit(0)
+except IOError:  # Not USRBIN
+    pass
+else:
+    exit(0)
+
+print("{} is not seem to a Fluka tally structure".format(file_name))
+exit(1)

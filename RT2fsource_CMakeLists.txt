@@ -1,0 +1,51 @@
+
+set(CMAKE_TOOLCHAIN_FILE
+  "${VCPKG_PATH}/scripts/buildsystems/vcpkg.cmake"
+  )
+  
+if( WIN32 )
+  set(VCPKG_TARGET_TRIPLET
+  "x64-windows"
+  )
+else( WIN32 )
+  if( UNIX AND NOT APPLE )
+    set(VCPKG_TARGET_TRIPLET
+    "x64-linux"
+    )
+  else()
+    set(VCPKG_TARGET_TRIPLET
+    "x64-osx"
+    )
+  endif()
+endif()
+
+
+set(MCRT2_SOURCE "$ENV{MCRT2_HOME}RT2fsource")
+
+set(CMAKE_BUILD_TYPE "Release")
+
+
+project(MCRT2fsource C CXX)
+
+cmake_minimum_required(VERSION 3.7 FATAL_ERROR)
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
+
+find_package(Boost REQUIRED COMPONENTS interprocess)
+
+add_executable(${FOUTPUT} 
+  ${FINPUT}
+  "${MCRT2_SOURCE}/mcrt2_fsource.cpp"
+  "${MCRT2_SOURCE}/generator.hpp"
+  "${MCRT2_SOURCE}/generator.cpp"
+  "${MCRT2_SOURCE}/../module/transport/buffer_struct.hpp"
+  "${MCRT2_SOURCE}/../module/transport/buffer_struct.cpp"
+  "${MCRT2_SOURCE}/../module/particles/define_struct.hpp"
+  "${MCRT2_SOURCE}/../module/particles/define_struct.cpp"
+  "${MCRT2_SOURCE}/../module/source/source_struct.hpp"
+)
+
+target_link_libraries(${FOUTPUT} Boost::interprocess)
+
+include_directories(${MCRT2_SOURCE})
+include_directories("${MCRT2_SOURCE}/..")
