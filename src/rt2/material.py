@@ -2,6 +2,7 @@ import os
 import numpy as np
 
 from rt2.photon import Photon
+from rt2.particle import PID_TO_PNAME
 from rt2.fortran import Fortran
 
 
@@ -87,3 +88,12 @@ def reader(file_name: str):
             compound.photon = Photon(stream)
 
     return compound_list
+
+
+def pidToName(pid: int) -> str:
+    if pid >= 1000:  # heavy ion ZA
+        z = pid // 1000
+        a = pid  % 1000
+        return '{}-{}'.format(AtomList.symbol(z), a)
+    else:
+        return PID_TO_PNAME[pid]

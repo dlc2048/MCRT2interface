@@ -1,0 +1,421 @@
+from __future__ import annotations
+
+from enum import Enum
+
+import matplotlib.pyplot as plt
+import numpy as np
+
+from rt2.neutron import LibraryFactory
+from rt2.prompt import Interactive
+from rt2.material import AtomList, pidToName
+from rt2.endf import REACTION_TYPE, SECONDARY_TYPE
+
+
+class PLOTTER_STATE(Enum):
+    IDLE          = 0
+    CROSS_SECTION = 1
+    ENERGY_DIST   = 2
+    ANGULAR_DIST  = 3
+    MULTIPLICITY  = 4
+
+
+def printHelp():
+    print("Functions: [exit]          : Exit RT2neutron program                                  ")
+    print("           [help]          : Print this message                                       ")
+    print("           [library_list]  : Get the list of available neutron library                ")
+    print("           [set_library]   : Switch the neutron library                               ")
+    print("           [data_list]     : Get the list of avaliable ENDF data from current library ")
+    print("           [set_target]    : Set the current target nucleus for plotting and sampling ")
+    print("           [current_target]: Print target information and possible channels           ")
+    print("           [branch]        : Print channel selection probability                      ")
+    print("           [sample]        : Sample secondaries                                       ")
+    print("           [plot_xs]       : Add graph of neutron cross-section of the current target ")
+    print("           [plot_energy]   : Add graph of secondary energy spectrum of entered MT     ")
+    print("           [draw_plot]     : Draw all added graphs                                    ")
+
+
+def printLibraryList():
+    lib_list    = LibraryFactory.getLibraryList()
+    current_lib = LibraryFactory.currentLibrary()
+
+    fm = "{} {:<16}"
+    for lib in lib_list:
+        picked = '*' if lib == current_lib else ' '
+        print(fm.format(picked, lib))
+    return
+
+
+def setLibrary():
+    def printHelpSub():
+        print("Parameters: --lib     | -l  <str>         Library name                        ")
+        print("            --help    | -h                Print this message                  ")
+    argv = Interactive.prompt()['--help', '-h']
+    if argv is not None:
+        printHelpSub()
+        return
+
+    argv = Interactive.prompt()['--lib', '-l']
+    if not argv:
+        print('[ERROR] Library must be specified')
+        printHelpSub()
+        return
+
+    LibraryFactory.setLibrary(argv[0])
+
+
+def printDataList():
+    def printHelpSub():
+        print("Parameters: --atom    | -z  <int>         Target atomic number                ")
+        print("            --help    | -h                Print this message                  ")
+    argv = Interactive.prompt()['--help', '-h']
+    if argv is not None:
+        printHelpSub()
+        return
+
+    argv = Interactive.prompt(1)['--atom', '-z']
+    z    = -1
+    if argv:
+        z = int(argv[0])
+
+    fm       = "{:<18} {:<6} {:<6} {:<12} {:<14}"
+    print(fm.format('Isotope', 'ZA', 'Isomer', 'Temperature', 'S(a,b)'))
+    for za, isomer, temperature, identifier in LibraryFactory.getDataList(z):
+        z = za // 1000
+        a = za  % 1000
+        str_isotope = '{}-{}'.format(AtomList.name(z), a)
+        str_isomer  = ' ' if isomer == 0 else 'm{}'.format(isomer)
+        str_temp    = '{} K'.format(temperature)
+        print(fm.format(str_isotope, za, str_isomer, str_temp, identifier))
+    return
+
+
+def setTargetIsotope():
+    def printHelpSub():
+        print("Parameters: --za           | -za  <int>        Target atom's ZA number              ")
+        print("            --isomer       | -i   <int>        Target atom's isomeric state         ")
+        print("            --temperature  | -t   <int>        Temperature                          ")
+        print("            --sab          | -s   <str>        Identifier of S(a,b) scattering table")
+        print("            --help         | -h                Print this message                   ")
+    argv = Interactive.prompt()['--help', '-h']
+    if argv is not None:
+        printHelpSub()
+        return
+
+    argv = Interactive.prompt()['--za', '-za']
+    if not argv:
+        print('[ERROR] ZA value must be specified')
+        printHelpSub()
+        return
+    za = int(argv[0])
+
+    argv   = Interactive.prompt()['--isomer', '-i']
+    isomer = 0
+    if argv:
+        isomer = int(argv[0])
+
+    argv = Interactive.prompt()['--temperature', '-t']
+    temp = 294
+    if argv:
+        temp = int(argv[0])
+
+    argv = Interactive.prompt()['--sab', '-s']
+    sab  = ''
+    if argv:
+        sab = argv[0]
+
+    LibraryFactory.choose(za, isomer, temp, sab)
+
+
+def printCurrentTarget():
+    za, isomer, temperature, sab = LibraryFactory.getCurrentKey()
+    z = za // 1000
+    a = za % 1000
+    str_isotope = '{}-{}'.format(AtomList.name(z), a)
+    print("[{}]".format(str_isotope))
+    print("Library    : {}".format(LibraryFactory.currentLibrary()))
+    print("ZA         : {}".format(za))
+    print("Isomer     : {}".format(isomer))
+    print("Temperature: {} K".format(temperature))
+    print("S(a,b)     : {}".format(sab))
+    print("")
+    print("[Reactions]")
+    lib = LibraryFactory.getCurrentData()
+    egn = lib.neutronGroupStructure()
+    mt_list = lib.keys()
+    fm = "{:<3} {:<10} {:<16} {:<6}"
+
+    print(fm.format('MT', 'Desc', 'Threshold [MeV]', 'Group'))
+    for mt in mt_list:
+        xs    = lib[mt].xs()
+        group = np.argmax(xs > 0)
+        floor = egn[group]
+        floor = '{:.3f}'.format(floor) if floor > .01 else '{:.3e}'.format(floor)
+        print(fm.format(mt, REACTION_TYPE[mt], floor, group))
+    print("")
+
+
+def printBranch():
+    def printHelpSub():
+        print("            --energy  | -e   <float>      Energy of incident neutron [MeV]    ")
+        print("            --help    | -h                Print this message                  ")
+    argv = Interactive.prompt()['--help', '-h']
+    if argv is not None:
+        printHelpSub()
+        return
+
+    lib = LibraryFactory.getCurrentData()
+
+    argv = Interactive.prompt()['--energy', '-e']
+    if not argv:
+        print('[ERROR] energy value must be specified')
+        printHelpSub()
+        return
+    energy = float(argv[0])
+    group = lib.getGroupFromEnergy(energy)
+
+    table = '{:>10} {:>14}'
+
+    za, isomer, temperature, sab = LibraryFactory.getCurrentKey()
+    z = za // 1000
+    a = za % 1000
+    str_isotope = '{}-{}'.format(AtomList.name(z), a)
+    print('Sampling branch ratio of [{}] at group {}'.format(str_isotope, group))
+    print(table.format('Channel', 'Ratio [%]'))
+    br_list = lib.branch(group)
+    for mt in lib.keys():
+        br     = br_list[mt] * 100.0
+        br_str = '{:.3}'.format(br) if br > 0.1 or br == 0.0 else '{:.3e}'.format(br)
+        print(table.format(lib[mt].__repr__(), br_str))
+
+
+def sampleCurrentTarget():
+    def printHelpSub():
+        print("            --mt      | -mt  <int>        MT value to sample secondaries      ")
+        print("            --energy  | -e   <float>      Energy of incident neutron [MeV]    ")
+        print("            --help    | -h                Print this message                  ")
+    argv = Interactive.prompt()['--help', '-h']
+    if argv is not None:
+        printHelpSub()
+        return
+
+    lib = LibraryFactory.getCurrentData()
+
+    argv = Interactive.prompt()['--energy', '-e']
+    if not argv:
+        print('[ERROR] energy value must be specified')
+        printHelpSub()
+        return
+    energy = float(argv[0])
+    group  = lib.getGroupFromEnergy(energy)
+
+    argv = Interactive.prompt()['--mt', '-mt']
+    mt   = 0
+    if argv:
+        mt = int(argv[0])
+
+    if not mt:
+        branch = lib.sample(group)
+    else:
+        branch = lib[mt]
+
+    print('{} channel (MT={}) is selected'.format(branch, branch.mt()))
+    print('Local energy depo  : {:.5} MeV'.format(branch.deposition(group)))
+    print('List of secondaries:')
+    table = '{:>8} {:>14} {:>14}'
+    print(table.format('Type', 'Energy [MeV]', 'Angle [Degree]'))
+    for sec in branch.sample(group):
+        name   = pidToName(sec['pid'])
+        energy = '{:.4e}'.format(sec['e'])
+        angle  = '{:.3}'.format(np.acos(sec['w']))
+        print(table.format(name, energy, angle))
+
+    return
+
+
+def plotCrossSection():
+    def printHelpSub():
+        print("            --mt      | -mt  <int>        MT value to draw cross-section      ")
+        print("            --help    | -h                Print this message                  ")
+    argv = Interactive.prompt()['--help', '-h']
+    if argv is not None:
+        printHelpSub()
+        return
+
+    za, isomer, temperature, sab = LibraryFactory.getCurrentKey()
+    z = za // 1000
+    a = za % 1000
+    str_isotope     = '{}-{}'.format(AtomList.symbol(z), a)
+    legend_label_fm = '{} {}'
+
+    lib     = LibraryFactory.getCurrentData()
+    mt_list = lib.keys()
+
+    argv = Interactive.prompt()['--mt', '-mt']
+    mt   = 0
+    if argv:
+        mt = int(argv[0])
+
+    egn      = lib.neutronGroupStructure()
+    xs_total = np.zeros(len(egn) - 1, dtype=float)
+
+    if mt in (0, 1):  # prepare total XS
+        for mt_seg in mt_list:
+            xs_total += lib[mt_seg].xs()
+        xs_total = np.append(xs_total[0], xs_total)
+
+    if mt == 0:
+        plt.step(egn, xs_total, label=legend_label_fm.format(str_isotope, '(total)'))
+        for mt_seg in mt_list:
+            xs = lib[mt_seg].xs()
+            xs = np.append(xs[0], xs)
+            plt.step(egn, xs, label=legend_label_fm.format(str_isotope, REACTION_TYPE[mt_seg]))
+    elif mt == 1:
+        plt.step(egn, xs_total, label=legend_label_fm.format(str_isotope, '(total)'))
+    else:
+        assert mt in mt_list, '[ERROR] reaction MT={} not exist in current target'.format(mt)
+        xs = lib[mt].xs()
+        xs = np.append(xs[0], xs)
+        plt.step(egn, xs, label=legend_label_fm.format(str_isotope, REACTION_TYPE[mt]))
+
+
+def plotTransition():
+    def printHelpSub():
+        print("            --mt      | -mt  <int>        MT value to draw transition            ")
+        print("            --mf      | -mf  <int>        MF value (secondary) to draw transition")
+        print("            --energy  | -e <float>        Kinetic energy of incident neutron     ")
+        print("            --help    | -h                Print this message                     ")
+    argv = Interactive.prompt()['--help', '-h']
+    if argv is not None:
+        printHelpSub()
+        return
+
+    za, isomer, temperature, sab = LibraryFactory.getCurrentKey()
+    z = za // 1000
+    a = za % 1000
+    str_isotope     = '{}-{}'.format(AtomList.symbol(z), a)
+    legend_label_fm = '{} {}, {}, n={} MeV'
+
+    lib     = LibraryFactory.getCurrentData()
+    mt_list = lib.keys()
+
+    argv = Interactive.prompt()['--mt', '-mt']
+    if argv:
+        mt = int(argv[0])
+    else:
+        print('[ERROR] MT value must be specified')
+        printHelpSub()
+        return
+
+    assert mt in mt_list, '[ERROR] reaction MT={} not exist in current target'.format(mt)
+
+    argv = Interactive.prompt()['--mf', '-mf']
+    mf   = 0
+    if argv:
+        mf = int(argv[0])
+
+    argv = Interactive.prompt()['--energy', '-e']
+    if not argv:
+        print('[ERROR] energy value must be specified')
+        printHelpSub()
+        return
+    energy = float(argv[0])
+    group  = lib.getGroupFromEnergy(energy)
+
+    egn = lib.neutronGroupStructure()
+    egg = lib.gammaGroupStructure()
+
+    mf_list, _ = lib[mt].instruction(group)
+    mf_list = np.unique(mf_list)
+
+    if mf == 0:
+        for mf_this in mf_list:
+            trans = lib[mt].transition(group, mf_this)
+            trans = np.append(trans[0], trans)
+            plt.step(egg if mf_this == 16 else egn, trans, label=legend_label_fm.format(
+                str_isotope, REACTION_TYPE[mt], SECONDARY_TYPE[mf_this], energy
+            ))
+    else:
+        trans = lib[mt].transition(group, mf)
+        trans = np.append(trans[0], trans)
+        plt.step(egg if mf == 16 else egn, trans, label=legend_label_fm.format(
+            str_isotope, REACTION_TYPE[mt], SECONDARY_TYPE[mf], energy
+        ))
+
+
+def drawPlotter(pstate: PLOTTER_STATE):
+    if len(plt.gcf().get_children()) <= 1:
+        print('[WARNING] plotter is empty')
+        return
+    if pstate == PLOTTER_STATE.CROSS_SECTION:
+        __drawPlotterXS()
+    elif pstate == PLOTTER_STATE.ENERGY_DIST:
+        __drawPlotterTrans()
+    elif pstate == PLOTTER_STATE.IDLE:
+        print('[WARNING] plotter is empty')
+
+
+def __drawPlotterXS():
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.legend()
+    plt.title('Neutron Cross-Section [MF=3]')
+    plt.xlabel('Energy [MeV]')
+    plt.ylabel('Cross-Section [b]')
+    plt.show()
+
+
+def __drawPlotterTrans():
+    plt.xscale('log')
+    plt.yscale('log')
+    plt.legend()
+    plt.title('Energy Distribution [MF=4 or MF=6]')
+    plt.xlabel('Secondary Energy [MeV]')
+    plt.ylabel('Probability [1/MeV]')
+    plt.show()
+
+
+plotter  = PLOTTER_STATE.IDLE
+
+while True:
+    function = Interactive.wait()
+    try:
+        if function.isspace() or not function:
+            continue
+        elif function == 'exit':
+            break
+        elif function == 'help':
+            printHelp()
+        elif function == 'library_list':
+            printLibraryList()
+        elif function == 'set_library':
+            setLibrary()
+        elif function == 'data_list':
+            printDataList()
+        elif function == 'set_target':
+            setTargetIsotope()
+        elif function == 'current_target':
+            printCurrentTarget()
+        elif function == 'branch':
+            printBranch()
+        elif function == 'sample':
+            sampleCurrentTarget()
+        elif function == 'plot_xs':
+            if plotter not in (PLOTTER_STATE.IDLE, PLOTTER_STATE.CROSS_SECTION):
+                print('[WARNING] Plotter encountered different type. Previous graph is destroyed')
+                plt.clf()
+            plotter = PLOTTER_STATE.CROSS_SECTION
+            plotCrossSection()
+        elif function == 'plot_energy':
+            if plotter not in (PLOTTER_STATE.IDLE, PLOTTER_STATE.ENERGY_DIST):
+                print('[WARNING] Plotter encountered different type. Previous graph is destroyed')
+                plt.clf()
+            plotter = PLOTTER_STATE.ENERGY_DIST
+            plotTransition()
+        elif function == 'draw_plot':
+            drawPlotter(plotter)
+            plotter = PLOTTER_STATE.IDLE
+        else:
+            print('Function "{}" not found'.format(function))
+            printHelp()
+    except Exception as e:
+        print(e)

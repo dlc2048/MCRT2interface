@@ -15,25 +15,26 @@ class PTYPE(Enum):
 PID_TO_PNAME = {
     -99: 'Mixed',
     -11: 'Hounsfield',
-    -1: 'Electron',
-    0: 'Photon',
-    1: 'Positron',
-    6: 'Neutron',
-    7: 'Fast Neutron',
-    21: 'Proton',
-    26: 'Heavy Ion',
-    27: 'Untransportable'
+    -1 : 'Electron',
+    0  : 'Photon',
+    1  : 'Positron',
+    6  : 'Neutron',
+    7  : 'Fast Neutron',
+    21 : 'Proton',
+    26 : 'Heavy Ion',
+    27 : 'Untransportable'
 }
 
 
 DTYPE_PHASE_SPACE = [
     ('pid', 'int32'),
-    ('x', 'float32'),
-    ('y', 'float32'),
-    ('z', 'float32'),
-    ('u', 'float32'),
-    ('v', 'float32'),
-    ('w', 'float32'),
+    ('x'  , 'float32'),
+    ('y'  , 'float32'),
+    ('z'  , 'float32'),
+    ('u'  , 'float32'),
+    ('v'  , 'float32'),
+    ('w'  , 'float32'),
     ('wee', 'float32'),
-    ('e', 'float32')
+    ('e'  , 'float32')
 ]
+

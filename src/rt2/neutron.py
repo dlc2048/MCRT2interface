@@ -38,6 +38,39 @@ class Reaction:
             prob_list = probFromAlias(self._parent._ralias[group], self._parent._rprob[group])
             return xs_ * prob_list[self._index]
 
+    def instruction(self, group: int) -> (np.ndarray, float):
+        ptype_list   = self._stape & 31
+        nhadron      = np.sum(ptype_list != 16)
+        multiplicity = self.multiplicity(group)
+        return ptype_list[:int(np.ceil(multiplicity)) + nhadron], multiplicity - int(multiplicity)
+
+    def transition(self, group: int, mf: int) -> np.ndarray:
+        cont = -1
+        for tape in self._stape:
+            if (tape & 31) == mf:
+                cont = tape >> 5
+                break
+        assert cont >= 0, 'Secondary table for "{}" not exist in reaction {}'.format(
+            SECONDARY_TYPE[mf], REACTION_TYPE[self.mt()]
+        )
+        egn = self._parent.neutronGroupStructure()
+        egg = self._parent.gammaGroupStructure()
+        ngn = len(egn) - 1
+        ngg = len(egg) - 1
+
+        gpos, glow, glen = self._parent._gcontrol[cont * ngn + group]
+
+        assert glen >= 1, 'Energy of incident neutron is lower than threshold'
+
+        alias = self._parent._galias[gpos:gpos + glen]
+        aprob = self._parent._gprob[gpos:gpos + glen]
+        prob  = probFromAlias(alias, aprob)
+
+        trans = np.zeros(ngg if mf == 16 else ngn)
+        trans[glow:glow + glen] = prob
+        trans /= egg[1:] - egg[:-1] if mf == 16 else egn[1:] - egn[:-1]  # 1/MeV
+        return trans
+
     def secondaries(self) -> dict:
         ptype_list    = self._stape & 31
         secs = {}
@@ -102,6 +135,15 @@ class Reaction:
             counter += 1
         return ps[:counter]
 
+    def checkIntegrity(self):
+        xs = self.xs()
+        ptype_list = self._stape & 31
+        cont_list  = self._stape >> 5
+        for group in len(xs):
+            if xs >= 0.0:
+                pass
+
+
 
 class Library:
     __egn = None  # neutron group
@@ -116,7 +158,7 @@ class Library:
         Library.__ngn = len(Library.__egn) - 1
 
     @staticmethod
-    def neutronGroupStructure() -> np.ndarray | None:
+    def neutronGroupStructure() -> np.ndarray[float] | None:
         return Library.__egn
 
     @staticmethod
@@ -154,6 +196,9 @@ class Library:
 
         ngn = len(egn) - 1
 
+        # angle group
+        agroup = file.read(np.int32)[0]
+
         # xs
         self._xs = file.read(np.float32)
         assert len(self._xs) == ngn, 'Length of loaded neutron group is not matched to this file'
@@ -185,12 +230,9 @@ class Library:
         self._gprob        = file.read(np.float32)
 
         # analyse the length of equiprobable bin
-        last_block_idx = np.max((stape >> 5)[stape & 31 != 16])
-        last_control   = self._gcontrol[ngn * (last_block_idx + 1) - 1]
-        eabin_length   = last_control[0] + last_control[2]
         eabin          = file.read(np.float32)
-        assert len(eabin) % eabin_length == 0, 'Equiprobable angle bin is misaligned'
-        self._eabin = eabin.reshape((-1, len(eabin) // eabin_length))
+        assert len(eabin) % agroup == 0, 'Equiprobable angle bin is misaligned'
+        self._eabin = eabin.reshape((-1, agroup))
         file.close()
 
     def xs(self, group: int = -1) -> np.ndarray | float:
@@ -244,6 +286,10 @@ class Library:
         else:  # gamma
             mu  = rand * 2.0 - 1.0  # isotropic
         return group, mu
+
+    def checkIntegrity(self):
+        for reaction in self._reactions:
+            reaction.checkIntegrity()
 
     def __getitem__(self, mt: int) -> Reaction | None:
         for reaction in self._reactions:
