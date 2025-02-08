@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import re
 
 import numpy as np
 
@@ -44,7 +43,7 @@ class Reaction:
         multiplicity = self.multiplicity(group)
         return ptype_list[:int(np.ceil(multiplicity)) + nhadron], multiplicity - int(multiplicity)
 
-    def transition(self, group: int, mf: int) -> np.ndarray:
+    def transition(self, group: int, mf: int, norm: bool = False) -> np.ndarray:
         cont = -1
         for tape in self._stape:
             if (tape & 31) == mf:
@@ -68,8 +67,50 @@ class Reaction:
 
         trans = np.zeros(ngg if mf == 16 else ngn)
         trans[glow:glow + glen] = prob
-        trans /= egg[1:] - egg[:-1] if mf == 16 else egn[1:] - egn[:-1]  # 1/MeV
+        if norm:
+            trans /= egg[1:] - egg[:-1] if mf == 16 else egn[1:] - egn[:-1]  # 1/MeV
         return trans
+
+    def angularDistribution(self, group: int, mf: int) -> (np.ndarray, np.ndarray):
+        if mf == 16:  # photon -> isotropic
+            return np.array([-1.0, 1.0]), np.array([1.0])
+
+        cont = -1
+        for tape in self._stape:
+            if (tape & 31) == mf:
+                cont = tape >> 5
+                break
+        assert cont >= 0, 'Secondary table for "{}" not exist in reaction {}'.format(
+            SECONDARY_TYPE[mf], REACTION_TYPE[self.mt()]
+        )
+        egn = self._parent.neutronGroupStructure()
+        ngn = len(egn) - 1
+
+        gpos, glow, glen = self._parent._gcontrol[cont * ngn + group]
+
+        assert glen >= 1, 'Energy of incident neutron is lower than threshold'
+
+        alias = self._parent._galias[gpos:gpos + glen]
+        aprob = self._parent._gprob[gpos:gpos + glen]
+        prob  = probFromAlias(alias, aprob)
+
+        eabin = self._parent._eabin[gpos:gpos + glen]
+
+        eabin_t  = np.sort(np.unique(eabin))
+        eadist_t = np.zeros(len(eabin_t) - 1)
+
+        for p, equi in zip(prob, eabin):
+            norm = len(equi) - 1
+            for i in range(norm):
+                bifrom = np.where(eabin_t == equi[i])[0][0]
+                bito   = np.where(eabin_t == equi[i + 1])[0][0]
+                bseg   = eabin_t[bifrom:bito + 1]
+                width  = bseg[1:] - bseg[:-1]
+                width  = width / np.sum(width)
+                eadist_t[bifrom:bito] += p / norm * width
+                pass
+
+        return eabin_t, eadist_t
 
     def secondaries(self) -> dict:
         ptype_list    = self._stape & 31
@@ -135,14 +176,74 @@ class Reaction:
             counter += 1
         return ps[:counter]
 
-    def checkIntegrity(self):
+    def checkIntegrity(self, verbose: bool) -> bool:
         xs = self.xs()
-        ptype_list = self._stape & 31
-        cont_list  = self._stape >> 5
-        for group in len(xs):
-            if xs >= 0.0:
-                pass
+        ptype_list  = self._stape & 31
+        cont_list   = self._stape >> 5
+        ngn = len(Library.neutronGroupStructure()) - 1
+        ngg = len(Library.gammaGroupStructure()) - 1
+        if verbose:
+            print("Check data integrity of {} channel".format(self.__repr__()))
+            print("Lowest group    : {}".format(np.argmax(xs > 0)))
+            print("Secondary action: ")
+            for i, ptype in enumerate(ptype_list):
+                print("{} - {}".format(i, SECONDARY_TYPE[ptype]))
 
+        assert len(self._stape) < 30, 'Sampling tape length overflow, length={}'.format(len(self._stape))
+
+        for group in range(len(xs)):
+            if xs[group] <= 0.0:
+                continue
+            # check depo & multiplicity value
+            depo = self.deposition(group)
+            mult = self._parent._multiplicity[self._index * ngn + group]
+            assert depo >= 0.0, 'Negative deposition detected, group={} E={}'.format(group, depo)
+            assert len(ptype_list) >= mult, \
+                'Secondary control tape is shorter than multiplicity {} < {}'.format(len(ptype_list), mult)
+            cont_checked = set()
+            for i, (ptype, cont) in enumerate(zip(ptype_list, cont_list)):
+                if i >= np.ceil(mult):
+                    continue
+                if cont in cont_checked:
+                    continue
+                cont_checked.add(cont)
+                cpos, gfloor, length = self._parent._gcontrol[group + cont * ngn]
+                # check control card
+                assert cpos >= 0, \
+                    'Negative control position detected, group={} ptype={}'.format(group, ptype)
+
+                if length < 0:  # table not exist -> empty secondary
+                    continue
+
+                if ptype == 16:  # gamma
+                    assert 0 <= gfloor < ngg, \
+                        'Gamma transition group out of range from={} to={}'.format(group, gfloor)
+                    assert 0 <= gfloor + length <= ngg, \
+                        'Gamma transition group out of range from={} to={}'.format(group, gfloor + length - 1)
+                else:
+                    assert 0 <= gfloor < ngn, \
+                        'Neutron transition group out of range from={} to={}'.format(group, gfloor)
+                    assert 0 <= gfloor + length <= ngn, \
+                        'Neutron transition group out of range from={} to={}'.format(group, gfloor + length - 1)
+                # check alias table
+                # check length
+                prob  = self._parent._gprob[cpos:cpos + length]
+                alias = self._parent._galias[cpos:cpos + length]
+                assert len(prob)  == length, 'gprob out of range at group={}, position={}'.format(group, cpos)
+                assert len(alias) == length, 'galias out of range at group={}, position={}'.format(group, cpos)
+                # check table integrity
+                for p, a in zip(prob, alias):
+                    assert p > 1.0 or 0 <= a < length, \
+                        'galias transition out of range at group={}, alias={}'.format(group, a)
+                # check cost
+                if ptype != 16:  # hadron must have eabin
+                    for j in range(cpos, cpos + length):
+                        assert 0 <= j < len(self._parent._eabin), \
+                            'eabin length mismatched j={}, length={}'.format(j, len(self._parent._eabin))
+                        eabin = self._parent._eabin[j]
+                        assert eabin[0] >= -1.01, 'eabin floor out of range mu={}'.format(eabin[0])
+                        assert eabin[-1] <= 1.01, 'eabin ceil out of range mu={}'.format(eabin[-1])
+        return True
 
 
 class Library:
@@ -185,8 +286,18 @@ class Library:
         rand = np.random.random()
         return rand * Library.__egg[group] + (1.0 - rand) * Library.__egg[group + 1]
 
-    def __init__(self, file_name: str):
+    def __init__(self, file_name: str, read_header: bool = False):
         file = Fortran(file_name, mode='r')
+        # header
+        self._za   = file.read(np.int32)[0]
+        self._isom = file.read(np.int32)[0]
+        self._temp = file.read(np.float32)[0]
+        self._sab  = file.read(np.uint8).tobytes().decode('utf-8')[:-1]
+        # angle group
+        agroup = file.read(np.int32)[0]
+
+        if read_header:  # finish
+            return
 
         # get group number
         egn = Library.neutronGroupStructure()
@@ -195,9 +306,6 @@ class Library:
         assert egg is not None, 'Gamma group structure data must be loaded'
 
         ngn = len(egn) - 1
-
-        # angle group
-        agroup = file.read(np.int32)[0]
 
         # xs
         self._xs = file.read(np.float32)
@@ -234,6 +342,18 @@ class Library:
         assert len(eabin) % agroup == 0, 'Equiprobable angle bin is misaligned'
         self._eabin = eabin.reshape((-1, agroup))
         file.close()
+
+    def za(self) -> int:
+        return self._za
+
+    def isomeric(self) -> int:
+        return self._isom
+
+    def temperature(self) -> float:
+        return self._temp
+
+    def sab(self) -> str:
+        return self._sab
 
     def xs(self, group: int = -1) -> np.ndarray | float:
         if group < 0:
@@ -287,9 +407,16 @@ class Library:
             mu  = rand * 2.0 - 1.0  # isotropic
         return group, mu
 
-    def checkIntegrity(self):
-        for reaction in self._reactions:
-            reaction.checkIntegrity()
+    def checkIntegrity(self, verbose: bool = False) -> bool:
+        try:
+            for reaction in self._reactions:
+                if not reaction.checkIntegrity(verbose):
+                    return False
+        except AssertionError as e:
+            print(e)
+            return False
+        else:
+            return True
 
     def __getitem__(self, mt: int) -> Reaction | None:
         for reaction in self._reactions:
@@ -299,11 +426,11 @@ class Library:
 
 
 class LibraryFactory:
-    __FILE_PATTERN = r'^(\d+)(?:m(\d+))?_(\d+)K(?:_(\w+))?\.(\w+)$'
 
     __library   = ''
     __cdata_key = ''
     __home      = os.path.join(os.environ['MCRT2_HOME'], 'resource\\neutron')
+    __header    = []
     __cache     = {}
 
     @staticmethod
@@ -312,6 +439,25 @@ class LibraryFactory:
         LibraryFactory.__library = lib
         Library.loadNeutronGroupStructure(os.path.join(LibraryFactory.__home, LibraryFactory.__library, 'egn.bin'))
         Library.loadGammaGroupStructure(os.path.join(LibraryFactory.__home, LibraryFactory.__library, 'egg.bin'))
+        LibraryFactory.__initDataList()
+
+    @staticmethod
+    def __initDataList():
+        lib_list = []
+        home = os.path.join(LibraryFactory.__home, LibraryFactory.__library, 'library')
+        for file in os.listdir(home):
+            library   = Library(os.path.join(home, file), True)
+            lib_list += [[
+                library.za(),
+                library.isomeric(),
+                library.temperature(),
+                library.sab(),
+                file
+            ]]
+        # sort
+        for i in range(2, -1, -1):
+            lib_list = sorted(lib_list, key=lambda li: li[i])
+        LibraryFactory.__header = lib_list
 
     @staticmethod
     def currentLibrary() -> str:
@@ -324,18 +470,12 @@ class LibraryFactory:
 
     @staticmethod
     def getDataList(z: int = -1) -> list:
-        file_list = os.listdir(os.path.join(LibraryFactory.__home, LibraryFactory.__library, 'library'))
+        if z < 0:
+            return LibraryFactory.__header
         lib_list  = []
-        for file in file_list:
-            match = re.match(LibraryFactory.__FILE_PATTERN, file)
-            if match:
-                za, isomer, temperature, identifier, extension = match.groups()
-                za          = int(za)
-                isomer      = int(isomer) if isomer else 0
-                temperature = int(temperature)
-                identifier  = identifier if identifier else ''
-                if z < 0 or z == (za // 1000):
-                    lib_list += [[za, isomer, temperature, identifier]]
+        for lib in LibraryFactory.__header:
+            if z == (lib[0] // 1000):
+                lib_list += [lib]
         # sort
         for i in range(2, -1, -1):
             lib_list = sorted(lib_list, key=lambda li: li[i])
@@ -346,19 +486,36 @@ class LibraryFactory:
         LibraryFactory.__cache = {}
 
     @staticmethod
-    def choose(za: int, isomer: int = 0, temperature: int = 294, identifier: str = ''):
-        za_str    = '{}'.format(za)
+    def choose(za: int, isomer: int = 0, temperature: float = 293.6, identifier: str = ''):
+
+        lib_list = []
+        for lib in LibraryFactory.__header:
+            if za == lib[0] and isomer == lib[1] and identifier == lib[3]:  # temperature later
+                lib_list += [lib]
+        # error
+        assert len(lib_list), 'Data not exist for za={}, isomer={}, sab={}'.format(za, isomer, identifier)
+
+        # choose proximate temperature
+        temp_dif_min = 1e30
+        lib_target   = None
+        for lib in lib_list:
+            temp_dif = abs(temperature - lib[2])
+            if temp_dif < temp_dif_min:
+                temp_dif_min = temp_dif
+                lib_target   = lib
+
+        za_str    = '{}'.format(lib_target[0])
         if isomer:
-            za_str += 'm{}'.format(isomer)
-        file_name = '{}_{}K'.format(za_str, temperature)
+            za_str += 'm{}'.format(lib_target[1])
+        dict_key = '{}_{}K'.format(za_str, int(lib_target[2]))
         if identifier:
-            file_name += '_{}'.format(identifier)
-        file_name += '.bin'
-        if file_name not in LibraryFactory.__cache.keys():
-            LibraryFactory.__cache[file_name] = Library(
-                os.path.join(LibraryFactory.__home, LibraryFactory.__library, 'library', file_name)
+            dict_key += '_{}'.format(lib_target[3])
+
+        if dict_key not in LibraryFactory.__cache.keys():
+            LibraryFactory.__cache[dict_key] = Library(
+                os.path.join(LibraryFactory.__home, LibraryFactory.__library, 'library', lib_target[4])
             )
-        LibraryFactory.__cdata_key = file_name
+        LibraryFactory.__cdata_key = dict_key
 
     @staticmethod
     def getCurrentData() -> Library:
@@ -370,13 +527,11 @@ class LibraryFactory:
     def getCurrentKey() -> list:
         assert LibraryFactory.__cdata_key in LibraryFactory.__cache.keys(), \
             'Data must be specified before the extraction'
-        match = re.match(LibraryFactory.__FILE_PATTERN, LibraryFactory.__cdata_key)
-        assert match
-        za, isomer, temperature, identifier, extension = match.groups()
-        za          = int(za)
-        isomer      = int(isomer) if isomer else 0
-        temperature = int(temperature)
-        identifier  = identifier if identifier else ''
+        current_lib = LibraryFactory.__cache[LibraryFactory.__cdata_key]
+        za          = current_lib.za()
+        isomer      = current_lib.isomeric()
+        temperature = int(current_lib.temperature())
+        identifier  = current_lib.sab()
         return [za, isomer, temperature, identifier]
 
 

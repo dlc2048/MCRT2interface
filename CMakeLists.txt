@@ -16,6 +16,13 @@ macro(makeWindowsBat src)
   file(APPEND ${target_file} "python %file% %*")
 endmacro()
 
+project(MCRT2interface LANGUAGES NONE)
+cmake_minimum_required(VERSION 3.7 FATAL_ERROR)
+
+find_package(Python REQUIRED)
+
+option(MCRT2_SET_SYMLINK "Set symbolic links for RT2 binary in UNIX system (need root)" OFF)
+
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/fsource_cache.txt" ${VCPKG_PATH})
 
 file(COPY "setup.py"         DESTINATION ${CMAKE_CURRENT_BINARY_DIR})
@@ -51,6 +58,12 @@ file(COPY "RT2fsource"         DESTINATION ${CMAKE_CURRENT_BINARY_DIR}
   GROUP_READ GROUP_EXECUTE 
   WORLD_READ WORLD_EXECUTE
 )
+file(COPY "RT2neutron"         DESTINATION ${CMAKE_CURRENT_BINARY_DIR} 
+  FILE_PERMISSIONS 
+  OWNER_READ OWNER_WRITE OWNER_EXECUTE 
+  GROUP_READ GROUP_EXECUTE 
+  WORLD_READ WORLD_EXECUTE
+)
 
 file(COPY "RT2fsource_template.cpp"   DESTINATION ${CMAKE_CURRENT_BINARY_DIR}
   FILE_PERMISSIONS 
@@ -81,6 +94,7 @@ if( MCRT2_SET_SYMLINK )
     makeWindowsBat("RT2geant4" )
     makeWindowsBat("RT2nifti"  )
     makeWindowsBat("RT2fsource")
+    makeWindowsBat("RT2neutron")
   else( WIN32 )
     if( UNIX AND NOT APPLE )
       makePythonLink(
@@ -101,6 +115,10 @@ if( MCRT2_SET_SYMLINK )
       )
       makePythonLink(
         "${CMAKE_CURRENT_BINARY_DIR}/RT2fsource" 
+        "/usr/local/bin"
+      )
+      makePythonLink(
+        "${CMAKE_CURRENT_BINARY_DIR}/RT2neutron" 
         "/usr/local/bin"
       )
     else()

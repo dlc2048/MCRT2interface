@@ -4,6 +4,7 @@ from enum import Enum
 
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
 
 from rt2.neutron import LibraryFactory
 from rt2.prompt import Interactive
@@ -31,6 +32,7 @@ def printHelp():
     print("           [sample]        : Sample secondaries                                       ")
     print("           [plot_xs]       : Add graph of neutron cross-section of the current target ")
     print("           [plot_energy]   : Add graph of secondary energy spectrum of entered MT     ")
+    print("           [plot_angle]    : Add graph of secondary angular distribution of entered MT")
     print("           [draw_plot]     : Draw all added graphs                                    ")
 
 
@@ -79,12 +81,12 @@ def printDataList():
 
     fm       = "{:<18} {:<6} {:<6} {:<12} {:<14}"
     print(fm.format('Isotope', 'ZA', 'Isomer', 'Temperature', 'S(a,b)'))
-    for za, isomer, temperature, identifier in LibraryFactory.getDataList(z):
+    for za, isomer, temperature, identifier, _ in LibraryFactory.getDataList(z):
         z = za // 1000
         a = za  % 1000
         str_isotope = '{}-{}'.format(AtomList.name(z), a)
         str_isomer  = ' ' if isomer == 0 else 'm{}'.format(isomer)
-        str_temp    = '{} K'.format(temperature)
+        str_temp    = '{} K'.format(int(temperature))
         print(fm.format(str_isotope, za, str_isomer, str_temp, identifier))
     return
 
@@ -226,10 +228,37 @@ def sampleCurrentTarget():
     for sec in branch.sample(group):
         name   = pidToName(sec['pid'])
         energy = '{:.4e}'.format(sec['e'])
-        angle  = '{:.3}'.format(np.acos(sec['w']))
+        angle  = '{:.3}'.format(np.arccos(sec['w']) * 180 / np.pi)
         print(table.format(name, energy, angle))
 
     return
+
+
+def checkIntegrity():
+    def printHelpSub():
+        print("            --all     | -a                Test all isotopes in the current library")
+        print("            --help    | -h                Print this message                      ")
+    argv = Interactive.prompt()['--help', '-h']
+    if argv is not None:
+        printHelpSub()
+        return
+
+    argv = Interactive.prompt()['-all', '-a']
+    if argv is not None:  # loop all
+        LibraryFactory.clear()
+        pbar = tqdm(LibraryFactory.getDataList())
+        for item in pbar:
+            pbar.set_description('{:<30}'.format(item[-1])[:30])
+            LibraryFactory.choose(*item[:-1])
+            lib = LibraryFactory.getCurrentData()
+            if not lib.checkIntegrity():
+                pbar.write("Problem detected in file '{}'".format(item[-1]))
+    else:
+        lib = LibraryFactory.getCurrentData()
+        if not lib.checkIntegrity(True):
+            print("Problem detected")
+        else:
+            print("OK")
 
 
 def plotCrossSection():
@@ -244,8 +273,11 @@ def plotCrossSection():
     za, isomer, temperature, sab = LibraryFactory.getCurrentKey()
     z = za // 1000
     a = za % 1000
-    str_isotope     = '{}-{}'.format(AtomList.symbol(z), a)
+    str_isotope     = '{}-{} {}K'.format(AtomList.symbol(z), a, int(temperature))
     legend_label_fm = '{} {}'
+
+    if len(sab):
+        str_isotope = '{} [{}]'.format(str_isotope, sab)
 
     lib     = LibraryFactory.getCurrentData()
     mt_list = lib.keys()
@@ -292,8 +324,11 @@ def plotTransition():
     za, isomer, temperature, sab = LibraryFactory.getCurrentKey()
     z = za // 1000
     a = za % 1000
-    str_isotope     = '{}-{}'.format(AtomList.symbol(z), a)
+    str_isotope     = '{}-{} {}K'.format(AtomList.symbol(z), a, int(temperature))
     legend_label_fm = '{} {}, {}, n={} MeV'
+
+    if len(sab):
+        str_isotope = '{} [{}]'.format(str_isotope, sab)
 
     lib     = LibraryFactory.getCurrentData()
     mt_list = lib.keys()
@@ -329,15 +364,83 @@ def plotTransition():
 
     if mf == 0:
         for mf_this in mf_list:
-            trans = lib[mt].transition(group, mf_this)
+            trans = lib[mt].transition(group, mf_this, True)
             trans = np.append(trans[0], trans)
             plt.step(egg if mf_this == 16 else egn, trans, label=legend_label_fm.format(
                 str_isotope, REACTION_TYPE[mt], SECONDARY_TYPE[mf_this], energy
             ))
     else:
-        trans = lib[mt].transition(group, mf)
+        trans = lib[mt].transition(group, mf, True)
         trans = np.append(trans[0], trans)
         plt.step(egg if mf == 16 else egn, trans, label=legend_label_fm.format(
+            str_isotope, REACTION_TYPE[mt], SECONDARY_TYPE[mf], energy
+        ))
+
+
+def plotAngularDistribution():
+    def printHelpSub():
+        print("            --mt      | -mt  <int>        MT value to draw distribution            ")
+        print("            --mf      | -mf  <int>        MF value (secondary) to draw distribution")
+        print("            --energy  | -e <float>        Kinetic energy of incident neutron       ")
+        print("            --help    | -h                Print this message                       ")
+    argv = Interactive.prompt()['--help', '-h']
+    if argv is not None:
+        printHelpSub()
+        return
+
+    lib = LibraryFactory.getCurrentData()
+    mt_list = lib.keys()
+
+    argv = Interactive.prompt()['--mt', '-mt']
+    if argv:
+        mt = int(argv[0])
+    else:
+        print('[ERROR] MT value must be specified')
+        printHelpSub()
+        return
+
+    assert mt in mt_list, '[ERROR] reaction MT={} not exist in current target'.format(mt)
+
+    argv = Interactive.prompt()['--mf', '-mf']
+    mf   = 0
+    if argv:
+        mf = int(argv[0])
+
+    argv = Interactive.prompt()['--energy', '-e']
+    if not argv:
+        print('[ERROR] energy value must be specified')
+        printHelpSub()
+        return
+    energy = float(argv[0])
+    group  = lib.getGroupFromEnergy(energy)
+
+    za, isomer, temperature, sab = LibraryFactory.getCurrentKey()
+    z = za // 1000
+    a = za % 1000
+    str_isotope     = '{}-{} {}K'.format(AtomList.symbol(z), a, int(temperature))
+    legend_label_fm = '{} {}, {}, n={} MeV'
+
+    if len(sab):
+        str_isotope = '{} [{}]'.format(str_isotope, sab)
+
+    mf_list, _ = lib[mt].instruction(group)
+    mf_list = np.unique(mf_list)
+        
+    if mf == 0:
+        for mf_this in mf_list:
+            eabin, eadist = lib[mt].angularDistribution(group, mf_this)
+            # normalize
+            eadist /= (eabin[1:] - eabin[:-1]) * np.pi * 2
+            eadist = np.append(eadist[0], eadist)
+            plt.step(eabin, eadist, label=legend_label_fm.format(
+                str_isotope, REACTION_TYPE[mt], SECONDARY_TYPE[mf_this], energy
+            ))
+    else:
+        eabin, eadist = lib[mt].angularDistribution(group, mf)
+        # normalize
+        eadist /= (eabin[1:] - eabin[:-1]) * np.pi * 2
+        eadist = np.append(eadist[0], eadist)
+        plt.step(eabin, eadist, label=legend_label_fm.format(
             str_isotope, REACTION_TYPE[mt], SECONDARY_TYPE[mf], energy
         ))
 
@@ -350,6 +453,8 @@ def drawPlotter(pstate: PLOTTER_STATE):
         __drawPlotterXS()
     elif pstate == PLOTTER_STATE.ENERGY_DIST:
         __drawPlotterTrans()
+    elif pstate == PLOTTER_STATE.ANGULAR_DIST:
+        __drawPlotterAngular()
     elif pstate == PLOTTER_STATE.IDLE:
         print('[WARNING] plotter is empty')
 
@@ -371,6 +476,14 @@ def __drawPlotterTrans():
     plt.title('Energy Distribution [MF=4 or MF=6]')
     plt.xlabel('Secondary Energy [MeV]')
     plt.ylabel('Probability [1/MeV]')
+    plt.show()
+
+
+def __drawPlotterAngular():
+    plt.legend()
+    plt.title('Angular Distribution [MF=5 or MF=6]')
+    plt.xlabel('Secondary Direction Cosine [mu]')
+    plt.ylabel('Probability [1/sr]')
     plt.show()
 
 
@@ -399,6 +512,8 @@ while True:
             printBranch()
         elif function == 'sample':
             sampleCurrentTarget()
+        elif function == 'integrity':
+            checkIntegrity()
         elif function == 'plot_xs':
             if plotter not in (PLOTTER_STATE.IDLE, PLOTTER_STATE.CROSS_SECTION):
                 print('[WARNING] Plotter encountered different type. Previous graph is destroyed')
@@ -411,6 +526,12 @@ while True:
                 plt.clf()
             plotter = PLOTTER_STATE.ENERGY_DIST
             plotTransition()
+        elif function == 'plot_angle':
+            if plotter not in (PLOTTER_STATE.IDLE, PLOTTER_STATE.ANGULAR_DIST):
+                print('[WARNING] Plotter encountered different type. Previous graph is destroyed')
+                plt.clf()
+            plotter = PLOTTER_STATE.ANGULAR_DIST
+            plotAngularDistribution()
         elif function == 'draw_plot':
             drawPlotter(plotter)
             plotter = PLOTTER_STATE.IDLE
