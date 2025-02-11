@@ -412,16 +412,16 @@ PDEF_DTYPE = [
     ('target', np.int32),
     ('region', np.int32),
     ('hid'   , np.int32),
-    ('wee'   , np.float32),
-    ('x'     , np.float32),
-    ('y'     , np.float32),
-    ('z'     , np.float32),
-    ('u'     , np.float32),
-    ('v'     , np.float32),
-    ('w'     , np.float32),
-    ('mass'  , np.float32),
-    ('eke'   , np.float32),
-    ('exc'   , np.float32)
+    ('wee'   , np.float64),
+    ('x'     , np.float64),
+    ('y'     , np.float64),
+    ('z'     , np.float64),
+    ('u'     , np.float64),
+    ('v'     , np.float64),
+    ('w'     , np.float64),
+    ('mass'  , np.float64),
+    ('eke'   , np.float64),
+    ('exc'   , np.float64)
 ]
 
 INCL_ZA_DTYPE = [
