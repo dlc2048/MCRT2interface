@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from enum import Enum
+from typing import Callable
+from copy import deepcopy
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -20,20 +22,132 @@ class PLOTTER_STATE(Enum):
     MULTIPLICITY  = 4
 
 
+class LegendSegment:
+    def __init__(self):
+        self.library = None
+        self.za      = None
+        self.isomer  = None
+        self.temp    = None
+        self.sab     = None
+        self.mt      = None
+        self.mf      = None
+        self.energy  = None
+
+
+class PlotterLegend:
+    def __init__(self):
+        self._legend_list = []
+
+    def _commonElement(self, lf: Callable):
+        items = list(map(lf, self._legend_list))
+        if all([x == items[0] for x in items]):
+            return items[0]
+        else:
+            return False
+
+    def _getTitleAndlegendsSegments(self, title_postfix: str, legends: list, f_extract: Callable, f_format: Callable):
+        item_common = self._commonElement(f_extract)
+        if item_common is not None:
+            if item_common:
+                title_postfix += '{}'.format(f_format(item_common))
+            else:
+                for i in range(len(self._legend_list)):
+                    item = f_extract(self._legend_list[i])
+                    legends[i] += '{}'.format(f_format(item))
+        return title_postfix
+
+    def append(self, seg: LegendSegment):
+        self._legend_list += [seg]
+
+    def clear(self):
+        self._legend_list = []
+
+    def getTitleAndlegends(self, title_prefix: str) -> (str, list):
+        title   = '{}'.format(title_prefix)
+        legends = [''] * len(self._legend_list)
+
+        title_postfix = ''
+
+        # library
+        title_postfix = self._getTitleAndlegendsSegments(
+            title_postfix, legends,
+            lambda x: x.library,
+            lambda item: '{} '.format(item)
+        )
+
+        # za
+        title_postfix = self._getTitleAndlegendsSegments(
+            title_postfix, legends,
+            lambda x: x.za,
+            lambda item: '{}-{} '.format(AtomList.symbol(item // 1000), item  % 1000)
+        )
+
+        # isomer
+        title_postfix = self._getTitleAndlegendsSegments(
+            title_postfix, legends,
+            lambda x: x.isomer,
+            lambda item: 'm{} '.format(item) if item else ''
+        )
+
+        # temperature
+        title_postfix = self._getTitleAndlegendsSegments(
+            title_postfix, legends,
+            lambda x: x.temp,
+            lambda item: '{}K '.format(int(item))
+        )
+
+        # sab table
+        title_postfix = self._getTitleAndlegendsSegments(
+            title_postfix, legends,
+            lambda x: x.sab,
+            lambda item: 'S(a,b)={} '.format(item) if item else ''
+        )
+
+        # mt
+        title_postfix = self._getTitleAndlegendsSegments(
+            title_postfix, legends,
+            lambda x: x.mt,
+            lambda item: ' {}'.format(REACTION_TYPE[item])
+        )
+
+        # mf
+        title_postfix = self._getTitleAndlegendsSegments(
+            title_postfix, legends,
+            lambda x: x.mf,
+            lambda item: '{} '.format(SECONDARY_TYPE[item])
+        )
+
+        # energy
+        title_postfix = self._getTitleAndlegendsSegments(
+            title_postfix, legends,
+            lambda x: x.energy,
+            lambda item: ' E={:.3e} MeV'.format(item)
+        )
+
+        if title_postfix:
+            title += ' for {}'.format(title_postfix)
+        return title, legends
+
+
+PLOTTER        = PLOTTER_STATE.IDLE
+LEGEND_HANDLER = PlotterLegend()
+
+
 def printHelp():
-    print("Functions: [exit]          : Exit RT2neutron program                                  ")
-    print("           [help]          : Print this message                                       ")
-    print("           [library_list]  : Get the list of available neutron library                ")
-    print("           [set_library]   : Switch the neutron library                               ")
-    print("           [data_list]     : Get the list of avaliable ENDF data from current library ")
-    print("           [set_target]    : Set the current target nucleus for plotting and sampling ")
-    print("           [current_target]: Print target information and possible channels           ")
-    print("           [branch]        : Print channel selection probability                      ")
-    print("           [sample]        : Sample secondaries                                       ")
-    print("           [plot_xs]       : Add graph of neutron cross-section of the current target ")
-    print("           [plot_energy]   : Add graph of secondary energy spectrum of entered MT     ")
-    print("           [plot_angle]    : Add graph of secondary angular distribution of entered MT")
-    print("           [draw_plot]     : Draw all added graphs                                    ")
+    print("Functions: [exit]             : Exit RT2neutron program                                  ")
+    print("           [help]             : Print this message                                       ")
+    print("           [library_list]     : Get the list of available neutron library                ")
+    print("           [set_library]      : Switch the neutron library                               ")
+    print("           [data_list]        : Get the list of avaliable ENDF data from current library ")
+    print("           [set_target]       : Set the current target nucleus for plotting and sampling ")
+    print("           [current_target]   : Print target information and possible channels           ")
+    print("           [branch]           : Print channel selection probability                      ")
+    print("           [sample]           : Sample secondaries                                       ")
+    print("           [plot_xs]          : Add graph of neutron cross-section of the current target ")
+    print("           [plot_energy]      : Add graph of secondary energy spectrum of entered MT     ")
+    print("           [plot_angle]       : Add graph of secondary angular distribution of entered MT")
+    print("           [plot_multiplicity]: Add graph of photon multiplicity of entered MT           ")
+    print("           [draw_plot]        : Draw all added graphs                                    ")
 
 
 def printLibraryList():
@@ -261,7 +375,7 @@ def checkIntegrity():
             print("OK")
 
 
-def plotCrossSection():
+def plotCrossSection(legend: PlotterLegend):
     def printHelpSub():
         print("            --mt      | -mt  <int>        MT value to draw cross-section      ")
         print("            --help    | -h                Print this message                  ")
@@ -271,46 +385,59 @@ def plotCrossSection():
         return
 
     za, isomer, temperature, sab = LibraryFactory.getCurrentKey()
-    z = za // 1000
-    a = za % 1000
-    str_isotope     = '{}-{} {}K'.format(AtomList.symbol(z), a, int(temperature))
-    legend_label_fm = '{} {}'
 
-    if len(sab):
-        str_isotope = '{} [{}]'.format(str_isotope, sab)
+    library = LibraryFactory.currentLibrary()
+    data    = LibraryFactory.getCurrentData()
+    mt_list = data.keys()
 
-    lib     = LibraryFactory.getCurrentData()
-    mt_list = lib.keys()
+    legend_proto = LegendSegment()
+    legend_proto.library = library
+    legend_proto.za      = za
+    legend_proto.isomer  = isomer
+    legend_proto.temp    = temperature
+    legend_proto.sab     = sab
 
     argv = Interactive.prompt()['--mt', '-mt']
     mt   = 0
     if argv:
         mt = int(argv[0])
 
-    egn      = lib.neutronGroupStructure()
+    egn      = data.neutronGroupStructure()
     xs_total = np.zeros(len(egn) - 1, dtype=float)
 
     if mt in (0, 1):  # prepare total XS
         for mt_seg in mt_list:
-            xs_total += lib[mt_seg].xs()
+            xs_total += data[mt_seg].xs()
         xs_total = np.append(xs_total[0], xs_total)
 
     if mt == 0:
-        plt.step(egn, xs_total, label=legend_label_fm.format(str_isotope, '(total)'))
+        plt.step(egn, xs_total)
+        legend_seg    = deepcopy(legend_proto)
+        legend_seg.mt = 1
+        legend.append(legend_seg)
         for mt_seg in mt_list:
-            xs = lib[mt_seg].xs()
+            xs = data[mt_seg].xs()
             xs = np.append(xs[0], xs)
-            plt.step(egn, xs, label=legend_label_fm.format(str_isotope, REACTION_TYPE[mt_seg]))
+            plt.step(egn, xs)
+            legend_seg    = deepcopy(legend_proto)
+            legend_seg.mt = mt_seg
+            legend.append(legend_seg)
     elif mt == 1:
-        plt.step(egn, xs_total, label=legend_label_fm.format(str_isotope, '(total)'))
+        plt.step(egn, xs_total)
+        legend_seg    = deepcopy(legend_proto)
+        legend_seg.mt = mt
+        legend.append(legend_seg)
     else:
         assert mt in mt_list, '[ERROR] reaction MT={} not exist in current target'.format(mt)
-        xs = lib[mt].xs()
+        xs = data[mt].xs()
         xs = np.append(xs[0], xs)
-        plt.step(egn, xs, label=legend_label_fm.format(str_isotope, REACTION_TYPE[mt]))
+        plt.step(egn, xs)
+        legend_seg    = deepcopy(legend_proto)
+        legend_seg.mt = mt
+        legend.append(legend_seg)
 
 
-def plotTransition():
+def plotTransition(legend_handler: PlotterLegend):
     def printHelpSub():
         print("            --mt      | -mt  <int>        MT value to draw transition            ")
         print("            --mf      | -mf  <int>        MF value (secondary) to draw transition")
@@ -322,16 +449,10 @@ def plotTransition():
         return
 
     za, isomer, temperature, sab = LibraryFactory.getCurrentKey()
-    z = za // 1000
-    a = za % 1000
-    str_isotope     = '{}-{} {}K'.format(AtomList.symbol(z), a, int(temperature))
-    legend_label_fm = '{} {}, {}, n={} MeV'
 
-    if len(sab):
-        str_isotope = '{} [{}]'.format(str_isotope, sab)
-
-    lib     = LibraryFactory.getCurrentData()
-    mt_list = lib.keys()
+    library = LibraryFactory.currentLibrary()
+    data    = LibraryFactory.getCurrentData()
+    mt_list = data.keys()
 
     argv = Interactive.prompt()['--mt', '-mt']
     if argv:
@@ -342,6 +463,14 @@ def plotTransition():
         return
 
     assert mt in mt_list, '[ERROR] reaction MT={} not exist in current target'.format(mt)
+
+    legend_proto = LegendSegment()
+    legend_proto.library = library
+    legend_proto.za      = za
+    legend_proto.isomer  = isomer
+    legend_proto.temp    = temperature
+    legend_proto.sab     = sab
+    legend_proto.mt      = mt
 
     argv = Interactive.prompt()['--mf', '-mf']
     mf   = 0
@@ -354,30 +483,34 @@ def plotTransition():
         printHelpSub()
         return
     energy = float(argv[0])
-    group  = lib.getGroupFromEnergy(energy)
+    group  = data.getGroupFromEnergy(energy)
 
-    egn = lib.neutronGroupStructure()
-    egg = lib.gammaGroupStructure()
+    egn = data.neutronGroupStructure()
+    egg = data.gammaGroupStructure()
 
-    mf_list, _ = lib[mt].instruction(group)
+    mf_list, _ = data[mt].instruction(group)
     mf_list = np.unique(mf_list)
 
     if mf == 0:
         for mf_this in mf_list:
-            trans = lib[mt].transition(group, mf_this, True)
+            trans = data[mt].transition(group, mf_this, True)
             trans = np.append(trans[0], trans)
-            plt.step(egg if mf_this == 16 else egn, trans, label=legend_label_fm.format(
-                str_isotope, REACTION_TYPE[mt], SECONDARY_TYPE[mf_this], energy
-            ))
+            plt.step(egg if mf_this == 16 else egn, trans)
+            legend_seg = deepcopy(legend_proto)
+            legend_seg.mf     = mf_this
+            legend_seg.energy = energy
+            legend_handler.append(legend_seg)
     else:
-        trans = lib[mt].transition(group, mf, True)
+        trans = data[mt].transition(group, mf, True)
         trans = np.append(trans[0], trans)
-        plt.step(egg if mf == 16 else egn, trans, label=legend_label_fm.format(
-            str_isotope, REACTION_TYPE[mt], SECONDARY_TYPE[mf], energy
-        ))
+        plt.step(egg if mf == 16 else egn, trans)
+        legend_seg        = deepcopy(legend_proto)
+        legend_seg.mf     = mf
+        legend_seg.energy = energy
+        legend_handler.append(legend_seg)
 
 
-def plotAngularDistribution():
+def plotAngularDistribution(legend_handler: PlotterLegend):
     def printHelpSub():
         print("            --mt      | -mt  <int>        MT value to draw distribution            ")
         print("            --mf      | -mf  <int>        MF value (secondary) to draw distribution")
@@ -388,8 +521,11 @@ def plotAngularDistribution():
         printHelpSub()
         return
 
-    lib = LibraryFactory.getCurrentData()
-    mt_list = lib.keys()
+    za, isomer, temperature, sab = LibraryFactory.getCurrentKey()
+
+    library = LibraryFactory.currentLibrary()
+    data    = LibraryFactory.getCurrentData()
+    mt_list = data.keys()
 
     argv = Interactive.prompt()['--mt', '-mt']
     if argv:
@@ -401,6 +537,14 @@ def plotAngularDistribution():
 
     assert mt in mt_list, '[ERROR] reaction MT={} not exist in current target'.format(mt)
 
+    legend_proto = LegendSegment()
+    legend_proto.library = library
+    legend_proto.za      = za
+    legend_proto.isomer  = isomer
+    legend_proto.temp    = temperature
+    legend_proto.sab     = sab
+    legend_proto.mt      = mt
+
     argv = Interactive.prompt()['--mf', '-mf']
     mf   = 0
     if argv:
@@ -411,83 +555,134 @@ def plotAngularDistribution():
         print('[ERROR] energy value must be specified')
         printHelpSub()
         return
+
     energy = float(argv[0])
-    group  = lib.getGroupFromEnergy(energy)
+    group  = data.getGroupFromEnergy(energy)
 
-    za, isomer, temperature, sab = LibraryFactory.getCurrentKey()
-    z = za // 1000
-    a = za % 1000
-    str_isotope     = '{}-{} {}K'.format(AtomList.symbol(z), a, int(temperature))
-    legend_label_fm = '{} {}, {}, n={} MeV'
-
-    if len(sab):
-        str_isotope = '{} [{}]'.format(str_isotope, sab)
-
-    mf_list, _ = lib[mt].instruction(group)
+    mf_list, _ = data[mt].instruction(group)
     mf_list = np.unique(mf_list)
         
     if mf == 0:
         for mf_this in mf_list:
-            eabin, eadist = lib[mt].angularDistribution(group, mf_this)
+            eabin, eadist = data[mt].angularDistribution(group, mf_this)
             # normalize
             eadist /= (eabin[1:] - eabin[:-1]) * np.pi * 2
-            eadist = np.append(eadist[0], eadist)
-            plt.step(eabin, eadist, label=legend_label_fm.format(
-                str_isotope, REACTION_TYPE[mt], SECONDARY_TYPE[mf_this], energy
-            ))
+            eadist  = np.append(eadist[0], eadist)
+            plt.step(eabin, eadist)
+            legend_seg = deepcopy(legend_proto)
+            legend_seg.mf     = mf_this
+            legend_seg.energy = energy
+            legend_handler.append(legend_seg)
     else:
-        eabin, eadist = lib[mt].angularDistribution(group, mf)
+        eabin, eadist = data[mt].angularDistribution(group, mf)
         # normalize
         eadist /= (eabin[1:] - eabin[:-1]) * np.pi * 2
-        eadist = np.append(eadist[0], eadist)
-        plt.step(eabin, eadist, label=legend_label_fm.format(
-            str_isotope, REACTION_TYPE[mt], SECONDARY_TYPE[mf], energy
-        ))
+        eadist  = np.append(eadist[0], eadist)
+        plt.step(eabin, eadist)
+        legend_seg        = deepcopy(legend_proto)
+        legend_seg.mf     = mf
+        legend_seg.energy = energy
+        legend_handler.append(legend_seg)
 
 
-def drawPlotter(pstate: PLOTTER_STATE):
+def plotMultiplicity(legend_handler: PlotterLegend):
+    def printHelpSub():
+        print("            --mt      | -mt  <int>        MT value to draw distribution            ")
+        print("            --help    | -h                Print this message                       ")
+    argv = Interactive.prompt()['--help', '-h']
+    if argv is not None:
+        printHelpSub()
+        return
+
+    za, isomer, temperature, sab = LibraryFactory.getCurrentKey()
+
+    library = LibraryFactory.currentLibrary()
+    data    = LibraryFactory.getCurrentData()
+    mt_list = data.keys()
+
+    argv = Interactive.prompt()['--mt', '-mt']
+    if argv:
+        mt = int(argv[0])
+    else:
+        print('[ERROR] MT value must be specified')
+        printHelpSub()
+        return
+
+    legend_proto = LegendSegment()
+    legend_proto.library = library
+    legend_proto.za      = za
+    legend_proto.isomer  = isomer
+    legend_proto.temp    = temperature
+    legend_proto.sab     = sab
+    legend_proto.mt      = mt
+
+    assert mt in mt_list, '[ERROR] reaction MT={} not exist in current target'.format(mt)
+
+    egn = data.neutronGroupStructure()
+
+    multi = data[mt].multiplicity()
+    multi = np.append(multi[0], multi)
+    plt.step(egn, multi)
+    legend_seg = deepcopy(legend_proto)
+    legend_handler.append(legend_seg)
+
+
+def drawPlotter(pstate: PLOTTER_STATE, legend_handler: PlotterLegend):
     if len(plt.gcf().get_children()) <= 1:
         print('[WARNING] plotter is empty')
         return
     if pstate == PLOTTER_STATE.CROSS_SECTION:
-        __drawPlotterXS()
+        __drawPlotterXS(legend_handler)
     elif pstate == PLOTTER_STATE.ENERGY_DIST:
-        __drawPlotterTrans()
+        __drawPlotterTrans(legend_handler)
     elif pstate == PLOTTER_STATE.ANGULAR_DIST:
-        __drawPlotterAngular()
+        __drawPlotterAngular(legend_handler)
+    elif pstate == PLOTTER_STATE.MULTIPLICITY:
+        __drawPlotterMultiplicity(legend_handler)
     elif pstate == PLOTTER_STATE.IDLE:
         print('[WARNING] plotter is empty')
 
 
-def __drawPlotterXS():
+def __drawPlotterXS(legend_handler: PlotterLegend):
     plt.xscale('log')
     plt.yscale('log')
-    plt.legend()
-    plt.title('Neutron Cross-Section [MF=3]')
+    title, legends = legend_handler.getTitleAndlegends('Neutron Cross-Section [MF=3]')
+    plt.legend(legends)
+    plt.title(title)
     plt.xlabel('Energy [MeV]')
     plt.ylabel('Cross-Section [b]')
     plt.show()
 
 
-def __drawPlotterTrans():
+def __drawPlotterTrans(legend_handler: PlotterLegend):
     plt.xscale('log')
     plt.yscale('log')
-    plt.legend()
-    plt.title('Energy Distribution [MF=4 or MF=6]')
+    title, legends = legend_handler.getTitleAndlegends('Energy Distribution [MF=4 or MF=6]')
+    plt.legend(legends)
+    plt.title(title)
     plt.xlabel('Secondary Energy [MeV]')
     plt.ylabel('Probability [1/MeV]')
     plt.show()
 
 
-def __drawPlotterAngular():
-    plt.legend()
-    plt.title('Angular Distribution [MF=5 or MF=6]')
+def __drawPlotterAngular(legend_handler: PlotterLegend):
+    title, legends = legend_handler.getTitleAndlegends('Angular Distribution [MF=5 or MF=6]')
+    plt.legend(legends)
+    plt.title(title)
     plt.xlabel('Secondary Direction Cosine [mu]')
     plt.ylabel('Probability [1/sr]')
     plt.show()
 
 
-plotter  = PLOTTER_STATE.IDLE
+def __drawPlotterMultiplicity(legend_handler: PlotterLegend):
+    title, legends = legend_handler.getTitleAndlegends('Photon Multiplicity [MF=16]')
+    plt.legend(legends)
+    plt.title(title)
+    plt.xscale('log')
+    plt.xlabel('Energy [MeV]')
+    plt.ylabel('Yield per Reaction')
+    plt.show()
+
 
 while True:
     function = Interactive.wait()
@@ -515,26 +710,37 @@ while True:
         elif function == 'integrity':
             checkIntegrity()
         elif function == 'plot_xs':
-            if plotter not in (PLOTTER_STATE.IDLE, PLOTTER_STATE.CROSS_SECTION):
+            if PLOTTER not in (PLOTTER_STATE.IDLE, PLOTTER_STATE.CROSS_SECTION):
                 print('[WARNING] Plotter encountered different type. Previous graph is destroyed')
+                LEGEND_HANDLER.clear()
                 plt.clf()
-            plotter = PLOTTER_STATE.CROSS_SECTION
-            plotCrossSection()
+            PLOTTER = PLOTTER_STATE.CROSS_SECTION
+            plotCrossSection(LEGEND_HANDLER)
         elif function == 'plot_energy':
-            if plotter not in (PLOTTER_STATE.IDLE, PLOTTER_STATE.ENERGY_DIST):
+            if PLOTTER not in (PLOTTER_STATE.IDLE, PLOTTER_STATE.ENERGY_DIST):
                 print('[WARNING] Plotter encountered different type. Previous graph is destroyed')
+                LEGEND_HANDLER.clear()
                 plt.clf()
-            plotter = PLOTTER_STATE.ENERGY_DIST
-            plotTransition()
+            PLOTTER = PLOTTER_STATE.ENERGY_DIST
+            plotTransition(LEGEND_HANDLER)
         elif function == 'plot_angle':
-            if plotter not in (PLOTTER_STATE.IDLE, PLOTTER_STATE.ANGULAR_DIST):
+            if PLOTTER not in (PLOTTER_STATE.IDLE, PLOTTER_STATE.ANGULAR_DIST):
                 print('[WARNING] Plotter encountered different type. Previous graph is destroyed')
+                LEGEND_HANDLER.clear()
                 plt.clf()
-            plotter = PLOTTER_STATE.ANGULAR_DIST
-            plotAngularDistribution()
+            PLOTTER = PLOTTER_STATE.ANGULAR_DIST
+            plotAngularDistribution(LEGEND_HANDLER)
+        elif function == 'plot_multiplicity':
+            if PLOTTER not in (PLOTTER_STATE.IDLE, PLOTTER_STATE.MULTIPLICITY):
+                print('[WARNING] Plotter encountered different type. Previous graph is destroyed')
+                LEGEND_HANDLER.clear()
+                plt.clf()
+            PLOTTER = PLOTTER_STATE.MULTIPLICITY
+            plotMultiplicity(LEGEND_HANDLER)
         elif function == 'draw_plot':
-            drawPlotter(plotter)
-            plotter = PLOTTER_STATE.IDLE
+            drawPlotter(PLOTTER, LEGEND_HANDLER)
+            PLOTTER = PLOTTER_STATE.IDLE
+            LEGEND_HANDLER.clear()
         else:
             print('Function "{}" not found'.format(function))
             printHelp()
