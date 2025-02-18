@@ -36,20 +36,19 @@ class DENSITY_TYPE(Enum):
 class _TallyContext:
     def __init__(self):
         self.name = ""
-        self._pid = -99
-        self.part = ""
+        self.unit = ""
         self.data = None
         self.unc  = None
 
     def _readHeader(self, stream: Fortran):
         name_byte = stream.read(np.byte).tostring()
         self.name = name_byte.decode('utf-8')
-        self._pid = stream.read(np.int32)[0]
-        self.part = PID_TO_PNAME[self._pid]
+        part_byte = stream.read(np.byte).tostring()
+        self.unit = part_byte.decode('utf-8')
 
     def _writeHeader(self, stream: Fortran):
         stream.write(self.name)
-        stream.write(np.array([self._pid], dtype=np.int32))
+        stream.write(self.unit)
 
     @staticmethod
     def _readData(stream: Fortran):
@@ -63,10 +62,8 @@ class _TallyContext:
 
     def _add(self, other: Union[_TallyContext, float, int, np.ndarray]):
         if isinstance(other, _TallyContext):
-            if self._pid != other._pid:
-                self._pid = -99
-                self.part = PID_TO_PNAME[self._pid]
-
+            if self.unit != other.unit:
+                raise TypeError()
             # Error propagation
             var = (self.unc * self.data) ** 2 + (other.unc * other.data) ** 2
             self.data += other.data
@@ -79,10 +76,8 @@ class _TallyContext:
 
     def _sub(self, other: Union[_TallyContext, float, int, np.ndarray]):
         if isinstance(other, _TallyContext):
-            if self._pid != other._pid:
-                self._pid = -99
-                self._part = PID_TO_PNAME[self._pid]
-
+            if self.unit != other.unit:
+                raise TypeError()
             # Error propagation
             var = (self.unc * self.data) ** 2 + (other.unc * other.data) ** 2
             self.data -= other.data  # Boundary check will be processed in child
@@ -111,6 +106,32 @@ class _TallyContext:
     def _summary(self):
         message = ""
         message += fieldFormat("Name", self.name)
+        message += fieldFormat("Unit", self.unit)
+        return message
+
+
+class _FilterContext:
+    def __init__(self):
+        self.part = ""
+
+    def _readFilter(self, stream: Fortran):
+        name_byte = stream.read(np.byte).tostring()
+        self.part = name_byte.decode('utf-8')
+
+    def _writeFilter(self, stream: Fortran):
+        stream.write(self.part)
+
+    def _combine(self, other: Union[_FilterContext, float, int, np.ndarray]):
+        if isinstance(other, _FilterContext):
+            if self.part == other.part:
+                pass
+            else:
+                self.part = "mixed"
+        else:
+            pass
+
+    def _summary(self):
+        message = ""
         message += fieldFormat("Part", self.part)
         return message
 
@@ -353,12 +374,11 @@ class _FluenceContext:
         self._erange[0] = efrom
         self._erange[1] = eto
 
-    def _summary(self, unit: str = "MeV/cm2/hist"):
+    def _summary(self):
         message = ""
         message += fieldFormat("Ebin type", self.etype())
         message += fieldFormat("Ebin range", tuple(self._erange), "MeV")
         message += fieldFormat("# of ebin", self._nbin)
-        message += fieldFormat("Unit", unit)
         return message
 
     def etype(self):
@@ -382,35 +402,16 @@ class _FluenceContext:
         return np.argmax(energy < self.ebin()) - 1
 
 
-class _DensityContext:
-    def __init__(self):
-        self._dtype = DENSITY_TYPE(0)
-
-    def _readUnit(self, stream: Fortran):
-        dtype = stream.read(np.int32)[0]
-        self._dtype = DENSITY_TYPE(dtype)
-
-    def _writeUnit(self, stream: Fortran):
-        dtype = self._dtype.value
-        stream.write(np.array([dtype], dtype=np.int32))
-
-    def _operatorCheck(self, other: Union[_DensityContext, float, int]):
-        if isinstance(other, _DensityContext):
-            if self._dtype != other._dtype:
-                raise TypeError("Density unit must be same")
-
-    def _summary(self):
-        return fieldFormat("Unit", "MeV/g/hist" if self._dtype == DENSITY_TYPE.DOSE else "MeV/cm3/hist")
-
-
-class MeshTrack(_TallyContext, _MeshContext, _FluenceContext):
+class MeshTrack(_TallyContext, _FilterContext, _MeshContext, _FluenceContext):
     def __init__(self, file_name: str):
         _TallyContext.__init__(self)
+        _FilterContext.__init__(self)
         _MeshContext.__init__(self)
         _FluenceContext.__init__(self)
 
         stream = Fortran(file_name)
         _TallyContext._readHeader(self, stream)
+        _FilterContext._readFilter(self, stream)
         _MeshContext._readGeometryInfo(self, stream)
         _FluenceContext._readEnergyStructure(self, stream)
 
@@ -429,6 +430,7 @@ class MeshTrack(_TallyContext, _MeshContext, _FluenceContext):
         _FluenceContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._add(other)
+        new._combine(other)
         return new
 
     def __sub__(self, other: Union[MeshTrack, float, int]):
@@ -438,6 +440,7 @@ class MeshTrack(_TallyContext, _MeshContext, _FluenceContext):
         _FluenceContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._sub(other)
+        new._combine(other)
         return new
 
     def __mul__(self, other: Union[MeshTrack, float, int]):
@@ -445,6 +448,7 @@ class MeshTrack(_TallyContext, _MeshContext, _FluenceContext):
         _FluenceContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._mul(other)
+        new._combine(other)
         return new
 
     def __truediv__(self, other: Union[MeshTrack, float, int]):
@@ -452,6 +456,7 @@ class MeshTrack(_TallyContext, _MeshContext, _FluenceContext):
         _FluenceContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._truediv(other)
+        new._combine(other)
         return new
 
     def __getitem__(self, index):
@@ -460,12 +465,13 @@ class MeshTrack(_TallyContext, _MeshContext, _FluenceContext):
         new._setMeshBoundary(index[:3])
         new._setEnergyBoundary(index[3])
         new.data = self.data[index]
-        new.unc = self.unc[index]
+        new.unc  = self.unc[index]
         return new
 
     def summary(self):
         message = ""
         message += _TallyContext._summary(self)
+        message += _FilterContext._summary(self)
         message += _MeshContext.__repr__(self)
         message += _FluenceContext._summary(self)
         return message
@@ -473,6 +479,7 @@ class MeshTrack(_TallyContext, _MeshContext, _FluenceContext):
     def write(self, file_name: str):
         stream = Fortran(file_name, mode='w')
         self._writeHeader(stream)
+        self._writeFilter(stream)
         self._writeGeometryInfo(stream)
         self._writeEnergyStructure(stream)
         self._writeData(stream)
@@ -512,23 +519,24 @@ class MeshTrack(_TallyContext, _MeshContext, _FluenceContext):
 
         new.name = self.name
         new.part = self.part
+        new.unit = self.unit
         return new
 
     def __repr__(self):
         return self.summary()
 
 
-class MeshDensity(_TallyContext, _MeshContext, _DensityContext):
+class MeshDensity(_TallyContext, _FilterContext, _MeshContext):
     def __init__(self, file_name: str, mode="r"):
         _TallyContext.__init__(self)
+        _FilterContext.__init__(self)
         _MeshContext.__init__(self)
-        _DensityContext.__init__(self)
 
         if mode == "r":
             stream = Fortran(file_name)
             _TallyContext._readHeader(self, stream)
+            _FilterContext._readFilter(self, stream)
             _MeshContext._readGeometryInfo(self, stream)
-            _DensityContext._readUnit(self, stream)
 
             data_1d, err_1d = super()._readData(stream)
             # Get dimension info
@@ -542,32 +550,32 @@ class MeshDensity(_TallyContext, _MeshContext, _DensityContext):
         if isinstance(other, _TallyContext) and not isinstance(other, MeshDensity):
             raise TypeError
         _MeshContext._operatorCheck(self, other)
-        _DensityContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._add(other)
+        new._combine(other)
         return new
 
     def __sub__(self, other: Union[MeshDensity, float, int]):
         if isinstance(other, _TallyContext) and not isinstance(other, MeshDensity):
             raise TypeError
         _MeshContext._operatorCheck(self, other)
-        _DensityContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._sub(other)
+        new._combine(other)
         return new
 
     def __mul__(self, other: Union[MeshDensity, float, int]):
         _MeshContext._operatorCheck(self, other)
-        _DensityContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._mul(other)
+        new._combine(other)
         return new
 
     def __truediv__(self, other: Union[MeshDensity, float, int]):
         _MeshContext._operatorCheck(self, other)
-        _DensityContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._truediv(other)
+        new._combine(other)
         return new
 
     def __getitem__(self, index):
@@ -581,8 +589,8 @@ class MeshDensity(_TallyContext, _MeshContext, _DensityContext):
     def summary(self):
         message = ""
         message += _TallyContext._summary(self)
+        message += _FilterContext._summary(self)
         message += _MeshContext.__repr__(self)
-        message += _DensityContext._summary(self)
         return message
 
     def setData(self, data: np.ndarray):
@@ -621,8 +629,8 @@ class MeshDensity(_TallyContext, _MeshContext, _DensityContext):
     def write(self, file_name: str):
         stream = Fortran(file_name, mode='w')
         self._writeHeader(stream)
+        self._writeFilter(stream)
         self._writeGeometryInfo(stream)
-        self._writeUnit(stream)
         self._writeData(stream)
         stream.close()
 
@@ -630,21 +638,23 @@ class MeshDensity(_TallyContext, _MeshContext, _DensityContext):
         return self.summary()
 
 
-class Cross(_TallyContext, _FluenceContext):
+class Cross(_TallyContext, _FilterContext, _FluenceContext):
     def __init__(self, file_name: str, mode="r"):
         _TallyContext.__init__(self)
+        _FilterContext.__init__(self)
         _FluenceContext.__init__(self)
 
         if mode == "r":
             stream = Fortran(file_name)
             _TallyContext._readHeader(self, stream)
+            _FilterContext._readFilter(self, stream)
             _FluenceContext._readEnergyStructure(self, stream)
 
             data_1d, err_1d = _TallyContext._readData(stream)
             # Get dimension info
             shape = self._nbin
             self.data = data_1d.reshape(shape)
-            self.unc = err_1d.reshape(shape)
+            self.unc  = err_1d.reshape(shape)
 
             stream.close()
 
@@ -654,6 +664,7 @@ class Cross(_TallyContext, _FluenceContext):
         _FluenceContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._add(other)
+        new._combine(other)
         return new
 
     def __sub__(self, other: Union[Cross, float, int]):
@@ -687,12 +698,14 @@ class Cross(_TallyContext, _FluenceContext):
     def summary(self):
         message = ""
         message += _TallyContext._summary(self)
+        message += _FilterContext._summary(self)
         message += _FluenceContext._summary(self)
         return message
 
     def write(self, file_name: str):
         stream = Fortran(file_name, mode='w')
         self._writeHeader(stream)
+        self._writeFilter(stream)
         self._writeEnergyStructure(stream)
         self._writeData(stream)
         stream.close()
@@ -701,20 +714,22 @@ class Cross(_TallyContext, _FluenceContext):
         return self.summary()
 
 
-class Track(_TallyContext, _FluenceContext):
+class Track(_TallyContext, _FilterContext, _FluenceContext):
     def __init__(self, file_name: str):
         _TallyContext.__init__(self)
+        _FilterContext.__init__(self)
         _FluenceContext.__init__(self)
 
         stream = Fortran(file_name)
         _TallyContext._readHeader(self, stream)
+        _FilterContext._readFilter(self, stream)
         _FluenceContext._readEnergyStructure(self, stream)
 
         data_1d, err_1d = _TallyContext._readData(stream)
         # Get dimension info
         shape = self._nbin
         self.data = data_1d.reshape(shape)
-        self.unc = err_1d.reshape(shape)
+        self.unc  = err_1d.reshape(shape)
 
         stream.close()
 
@@ -724,6 +739,7 @@ class Track(_TallyContext, _FluenceContext):
         _FluenceContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._add(other)
+        new._combine(other)
         return new
 
     def __sub__(self, other: Union[Track, float, int]):
@@ -732,18 +748,21 @@ class Track(_TallyContext, _FluenceContext):
         _FluenceContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._sub(other)
+        new._combine(other)
         return new
 
     def __mul__(self, other: Union[Track, float, int]):
         _FluenceContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._mul(other)
+        new._combine(other)
         return new
 
     def __truediv__(self, other: Union[Track, float, int]):
         _FluenceContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._truediv(other)
+        new._combine(other)
         return new
 
     def __getitem__(self, index):
@@ -757,12 +776,14 @@ class Track(_TallyContext, _FluenceContext):
     def summary(self):
         message = ""
         message += _TallyContext._summary(self)
+        message += _FilterContext._summary(self)
         message += _FluenceContext._summary(self)
         return message
 
     def write(self, file_name: str):
         stream = Fortran(file_name, mode='w')
         self._writeHeader(stream)
+        self._writeFilter(stream)
         self._writeEnergyStructure(stream)
         self._writeData(stream)
         stream.close()
@@ -771,14 +792,14 @@ class Track(_TallyContext, _FluenceContext):
         return self.summary()
 
 
-class Density(_TallyContext, _DensityContext):
+class Density(_TallyContext, _FilterContext):
     def __init__(self, file_name: str):
         _TallyContext.__init__(self)
-        _DensityContext.__init__(self)
+        _FilterContext.__init__(self)
 
         stream = Fortran(file_name)
         _TallyContext._readHeader(self, stream)
-        _DensityContext._readUnit(self, stream)
+        _FilterContext._readFilter(self, stream)
 
         data_1d, err_1d = _TallyContext._readData(stream)
         # Get dimension info
@@ -790,7 +811,6 @@ class Density(_TallyContext, _DensityContext):
     def __add__(self, other: Union[Density, float, int]):
         if isinstance(other, _TallyContext) and not isinstance(other, Density):
             raise TypeError
-        _DensityContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._add(other)
         return new
@@ -798,19 +818,16 @@ class Density(_TallyContext, _DensityContext):
     def __sub__(self, other: Union[Density, float, int]):
         if isinstance(other, _TallyContext) and not isinstance(other, Density):
             raise TypeError
-        _DensityContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._sub(other)
         return new
 
     def __mul__(self, other: Union[Density, float, int]):
-        _DensityContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._mul(other)
         return new
 
     def __truediv__(self, other: Union[Density, float, int]):
-        _DensityContext._operatorCheck(self, other)
         new = deepcopy(self)
         new._truediv(other)
         return new
@@ -818,13 +835,13 @@ class Density(_TallyContext, _DensityContext):
     def summary(self):
         message = ""
         message += _TallyContext._summary(self)
-        message += _DensityContext._summary(self)
+        message += _FilterContext._summary(self)
         return message
 
     def write(self, file_name: str):
         stream = Fortran(file_name, mode='w')
         self._writeHeader(stream)
-        self._writeUnit(stream)
+        self._writeFilter(stream)
         self._writeData(stream)
         stream.close()
 
@@ -867,7 +884,7 @@ class Detector(Cross):
     def summary(self):
         message = ""
         message += _TallyContext._summary(self)
-        message += _FluenceContext._summary(self, 'count/hist')
+        message += _FluenceContext._summary(self)
         return message
 
 
