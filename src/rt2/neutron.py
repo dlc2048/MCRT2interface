@@ -12,8 +12,9 @@ from rt2.particle import DTYPE_PHASE_SPACE
 
 # noinspection PyProtectedMember
 class Reaction:
-    def __init__(self, parent: Library, index: int, mt: int, stape: np.ndarray):
+    def __init__(self, parent: Library, index: int, mt: int, res_za: int, stape: np.ndarray):
         self._mt     = mt
+        self._res_za = res_za
         self._index  = index
         self._desc   = REACTION_TYPE[mt]
         self._stape  = stape
@@ -24,6 +25,9 @@ class Reaction:
 
     def mt(self) -> int:
         return self._mt
+
+    def resZA(self) -> int:
+        return self._res_za
 
     def xs(self, group: int = -1) -> np.ndarray | float:
         if group < 0:
@@ -312,7 +316,8 @@ class Library:
         assert len(self._xs) == ngn, 'Length of loaded neutron group is not matched to this file'
 
         # reaction
-        mt_list = file.read(np.int32)
+        mt_list     = file.read(np.int32)
+        res_za_list = file.read(np.int32)
 
         # reaction sampling tables
         rshape = (ngn, len(mt_list))
@@ -325,10 +330,10 @@ class Library:
 
         # reconstruct reaction
         self._reactions = []
-        for i, mt in enumerate(mt_list):
+        for i, (mt, res_za) in enumerate(zip(mt_list, res_za_list)):
             offset = stape_off[i]
             length = stape_len[i]
-            self._reactions += [Reaction(self, i, mt, stape[offset:offset + length])]
+            self._reactions += [Reaction(self, i, mt, res_za, stape[offset:offset + length])]
 
         # group
         self._multiplicity = file.read(np.float32)

@@ -334,8 +334,18 @@ def sampleCurrentTarget():
     else:
         branch = lib[mt]
 
+    res_za = branch.resZA()
+    res_z  = res_za // 1000
+    res_a  = res_za %  1000
+
+    if not res_za:
+        remnant = 'None'
+    else:
+        remnant = '{}-{}'.format(AtomList.symbol(res_z), res_a)
+
     print('{} channel (MT={}) is selected'.format(branch, branch.mt()))
-    print('Local energy depo  : {:.5} MeV'.format(branch.deposition(group)))
+    print('Local energy depo   : {:.5} MeV'.format(branch.deposition(group)))
+    print('Local target remnant: {}'.format(remnant))
     print('List of secondaries:')
     table = '{:>8} {:>14} {:>14}'
     print(table.format('Type', 'Energy [MeV]', 'Angle [Degree]'))
