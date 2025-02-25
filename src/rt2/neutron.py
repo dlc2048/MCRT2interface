@@ -25,7 +25,6 @@ class Reaction:
 
     def mt(self) -> int:
         return self._mt
-
     def resZA(self) -> int:
         return self._res_za
 
@@ -434,7 +433,7 @@ class LibraryFactory:
 
     __library   = ''
     __cdata_key = ''
-    __home      = os.path.join(os.environ['MCRT2_HOME'], 'resource\\neutron')
+    __home      = os.path.join(os.environ['MCRT2_HOME'], os.path.join('resource', 'neutron'))
     __header    = []
     __cache     = {}
 
