@@ -957,3 +957,40 @@ class PhaseSpace:
 
     def __repr__(self):
         return self.summary()
+
+
+class Activation(_TallyContext, _FilterContext):
+    def __init__(self, file_name: str):
+        _TallyContext.__init__(self)
+        _FilterContext.__init__(self)
+
+        stream = Fortran(file_name)
+        _TallyContext._readHeader(self, stream)
+        _FilterContext._readFilter(self, stream)
+
+        # read ZA info
+        self.za  = stream.read(np.int32)
+
+        data_1d, err_1d = _TallyContext._readData(stream)
+        # Get dimension info
+        self.data = data_1d
+        self.unc  = err_1d
+
+        stream.close()
+
+    def summary(self):
+        message = ""
+        message += _TallyContext._summary(self)
+        message += _FilterContext._summary(self)
+        return message
+
+    def write(self, file_name: str):
+        stream = Fortran(file_name, mode='w')
+        self._writeHeader(stream)
+        self._writeFilter(stream)
+        stream.write(self.za)
+        self._writeData(stream)
+        stream.close()
+
+    def __repr__(self):
+        return self.summary()
