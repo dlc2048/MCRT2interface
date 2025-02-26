@@ -7,7 +7,7 @@ from rt2.fortran import Fortran
 
 
 class AtomList:
-    __home  = os.path.join(os.environ['MCRT2_HOME'], 'resource\\material')
+    __home  = os.path.join(os.environ['MCRT2_HOME'], os.path.join('resource', 'material'))
     __atoms = {}
 
     @staticmethod
