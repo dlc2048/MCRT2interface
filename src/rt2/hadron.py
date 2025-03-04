@@ -53,28 +53,3 @@ class NuclearMassData(_SingletonTemplate):
             binding += (npair + zpair - 1) * 12 / a**0.5
         return z * const.MASS_PROTON + (a - z) * const.MASS_NEUTRON + binding
 
-
-class NeutronGroup(_SingletonTemplate):
-    __nfile = "resource\\neutron\\endf7_260_egn.bin"
-    __gfile = "resource\\neutron\\endf7_260_egg.bin"
-
-    def __init__(self):
-        if 'MCRT2_HOME' not in os.environ:
-            assert 'Environment variable "MCRT2_HOME" is missing'
-        home = os.environ['MCRT2_HOME']
-
-        nfname    = os.path.join(home, NeutronGroup.__nfile)
-        nf        = Fortran(nfname)
-        self._egn = nf.read(np.float32)
-        nf.close()
-
-        gfname    = os.path.join(home, NeutronGroup.__gfile)
-        gf        = Fortran(gfname)
-        self._egg = gf.read(np.float32)
-        gf.close()
-
-    def egn(self):
-        return self._egn
-
-    def egg(self):
-        return self._egg

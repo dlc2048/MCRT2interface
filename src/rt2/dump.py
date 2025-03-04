@@ -1,7 +1,8 @@
 import numpy as np
 import enum
 
-from rt2.hadron import NuclearMassData, NeutronGroup
+from rt2.cstruct import getBitMaskAndOffset, FLAGS_DEFAULT, FLAGS_GENION, FLAGS_DEEX
+from rt2.hadron import NuclearMassData
 from rt2.fortran import Fortran
 import rt2.constant as const
 
@@ -28,7 +29,7 @@ class BUFFER_TYPE(enum.Enum):
     PHOTON        = 3
     POSITRON      = 4
     NEUTRON       = 5
-    FNEUTRON      = 6
+    GNEUTRON      = 6
     GENION        = 7
     RELAXATION    = 8
     RAYLEIGH      = 9
@@ -82,6 +83,9 @@ class convertingRuleDefault(ParticleDefinition):
 
     def _inheritCommonMember(self, ps_formatted: np.ndarray, ps_unformatted: np.ndarray):
         # inherit
+        # bit mask, size, and offset
+        bmask, bshift = getBitMaskAndOffset(FLAGS_DEFAULT, 'region')
+
         ps_formatted['type']   = self._transform_target
         ps_formatted['target'] = 0
         ps_formatted['x']      = ps_unformatted['x']
@@ -89,7 +93,7 @@ class convertingRuleDefault(ParticleDefinition):
         ps_formatted['z']      = ps_unformatted['z']
         ps_formatted['wee']    = ps_unformatted['wee']
         ps_formatted['hid']    = ps_unformatted['hid']
-        ps_formatted['region'] = ps_unformatted['flag'] >> 16
+        ps_formatted['region'] = (ps_unformatted['flag'] & bmask) >> bshift
 
     @staticmethod
     def _cvtDirectionToMomentum(ps_formatted: np.ndarray, ps_unformatted: np.ndarray, eke: np.ndarray):
@@ -140,40 +144,6 @@ class convertingRuleInvalid(convertingRuleDefault):
         assert False
 
 
-class convertingRuleSlowNeutron(convertingRuleDefault):
-    def __init__(self, target: int, z: int, a: int, mass: float):
-        super().__init__(target, z, a, mass)
-
-    def convert(self, ps_unformatted: np.ndarray):
-        assert (np.all(ps_unformatted['type'] == self._transform_target))
-        ps_formatted = np.empty(ps_unformatted.shape, dtype=PDEF_DTYPE)
-
-        self._inheritCommonMember(ps_formatted, ps_unformatted)
-
-        # using direction element, fixed mass
-        ps_formatted['exc'] = 0.0
-
-        z = self.z()
-        a = self.a()
-        ps_formatted['mass'] = self.mass()
-        ps_formatted['za']   = z * 1000 + a
-
-        # kinetic energy
-        eke = ps_unformatted['e']
-
-        # group for slow neutron
-        group = np.frombuffer(eke.tobytes(), dtype=np.int32)
-
-        # neutron group structure
-        egn      = NeutronGroup.instance().egn()
-        egn_mean = 0.5 * (egn[1:] + egn[:-1])
-        eke      = egn_mean[group]
-
-        self._cvtDirectionToMomentum(ps_formatted, ps_unformatted, eke)
-
-        return ps_formatted
-
-
 class convertingRuleGenion(convertingRuleDefault):
     __za_list = None
 
@@ -190,6 +160,9 @@ class convertingRuleGenion(convertingRuleDefault):
 
         self._inheritCommonMember(ps_formatted, ps_unformatted)
 
+        # bit mask, size, and offset
+        bmask, bshift = getBitMaskAndOffset(FLAGS_GENION, 'ion_idx')
+
         # ion mass table
         mass_table = NuclearMassData.instance()
         list_mass = []
@@ -200,7 +173,7 @@ class convertingRuleGenion(convertingRuleDefault):
         list_mass = np.array(list_mass)
 
         # set mass & ZA
-        iid = ps_unformatted['flag'] & 0x0000ffff
+        iid = (ps_unformatted['flag'] & bmask) >> bshift
 
         ps_formatted['exc']  = 0.0
         ps_formatted['mass'] = list_mass[iid]
@@ -294,13 +267,6 @@ class convertingRuleINCL(convertingRuleDefault):
         return ps_formatted
 
 
-DEEX_FLAG_DTYPE = [
-    ('z'     , np.uint8),
-    ('a'     , np.uint8),
-    ('region', np.uint16)
-]
-
-
 class convertingRuleDEEX(convertingRuleDefault):
     def __init__(self, target: int):
         super().__init__(target, 0, 0, 0.0)
@@ -314,16 +280,17 @@ class convertingRuleDEEX(convertingRuleDefault):
         # mass table
         mass_table = NuclearMassData.instance()
 
+        bmask_z, bshift_z = getBitMaskAndOffset(FLAGS_DEEX, 'z')
+        bmask_a, bshift_a = getBitMaskAndOffset(FLAGS_DEEX, 'a')
+
         # set mass & ZA
-        deex_flag = np.frombuffer(ps_unformatted['flag'].tobytes(), dtype=DEEX_FLAG_DTYPE)
-        z = deex_flag['z']
-        a = deex_flag['a']
-        ps_formatted['za']     = z.astype(int) * 1000 + a.astype(int)
-        ps_formatted['region'] = deex_flag['region']
-        ps_formatted['exc']    = ps_unformatted['e']
+        z = (ps_unformatted['flag'] & bmask_z) >> bshift_z
+        a = (ps_unformatted['flag'] & bmask_a) >> bshift_a
+        ps_formatted['za']   = z.astype(int) * 1000 + a.astype(int)
+        ps_formatted['exc']  = ps_unformatted['e']
 
         vfunc = np.vectorize(mass_table.getMass)
-        ps_formatted['mass']   = vfunc(z, a)
+        ps_formatted['mass'] = vfunc(z, a)
 
         # get kinetic energy from momentum
         ps_formatted['u'] = ps_unformatted['u'] * 1e3  # GeV to MeV
@@ -360,8 +327,10 @@ class convertingRuleRelaxation(convertingRuleDefault):
 
         self._inheritCommonMember(ps_formatted, ps_unformatted)
 
+        bmask, bshift = getBitMaskAndOffset(FLAGS_DEFAULT, 'fmask')
+
         # ZA
-        shell_id  = ps_unformatted['flag'] >> 16
+        shell_id  = (ps_unformatted['flag'] & bmask >> bshift)
         za_target = np.digitize(shell_id, convertingRuleRelaxation.__shell_offset) - 1
         z         = convertingRuleRelaxation.__za_list[za_target]
         za        = z * 1000 + shell_id - convertingRuleRelaxation.__shell_offset[za_target]
@@ -378,8 +347,8 @@ FORMAT_RULE = {
     BUFFER_TYPE.ELECTRON     : convertingRuleDefault(BUFFER_TYPE.ELECTRON.value, -1, +0, const.MASS_ELECTRON),
     BUFFER_TYPE.PHOTON       : convertingRuleDefault(BUFFER_TYPE.PHOTON.value  , +0, +0, 0.0                ),
     BUFFER_TYPE.POSITRON     : convertingRuleDefault(BUFFER_TYPE.POSITRON.value, +1, +0, const.MASS_ELECTRON),
-    BUFFER_TYPE.NEUTRON      : convertingRuleSlowNeutron(BUFFER_TYPE.NEUTRON.value, +0, +1, const.MASS_NEUTRON),
-    BUFFER_TYPE.FNEUTRON     : convertingRuleDefault(BUFFER_TYPE.FNEUTRON.value, +0, +1, const.MASS_NEUTRON ),
+    BUFFER_TYPE.NEUTRON      : convertingRuleDefault(BUFFER_TYPE.NEUTRON.value , +0, +1, const.MASS_NEUTRON ),
+    BUFFER_TYPE.GNEUTRON     : convertingRuleDefault(BUFFER_TYPE.GNEUTRON.value, +0, +1, const.MASS_NEUTRON ),
     BUFFER_TYPE.GENION       : convertingRuleGenion(BUFFER_TYPE.GENION.value),
     BUFFER_TYPE.RELAXATION   : convertingRuleRelaxation(BUFFER_TYPE.RELAXATION.value),
     BUFFER_TYPE.RAYLEIGH     : convertingRuleDefault(BUFFER_TYPE.RAYLEIGH.value, +0, +0, 0.0                ),
@@ -430,7 +399,7 @@ INCL_ZA_DTYPE = [
 ]
 
 
-class PhaseSpace:
+class Dump:
     def __init__(self, file_name: str, from_npy: bool = False):
         self._ps = []
 
