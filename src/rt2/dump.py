@@ -43,16 +43,17 @@ class BUFFER_TYPE(enum.Enum):
     PBREM_SP      = 17
     BHABHA        = 18
     ANNIHI        = 19
-    DELTA         = 20
-    ION_NUCLEAR   = 21
-    BME           = 22
-    CN_FORMATION  = 23
-    ABRASION      = 24
-    NUC_SECONDARY = 25
-    DEEXCITATION  = 26
-    PHOTON_EVAP   = 27
-    COMP_FISSION  = 28
-    EOB           = 29
+    NEU_SECONDARY = 20
+    DELTA         = 21
+    ION_NUCLEAR   = 22
+    BME           = 23
+    CN_FORMATION  = 24
+    ABRASION      = 25
+    NUC_SECONDARY = 26
+    DEEXCITATION  = 27
+    PHOTON_EVAP   = 28
+    COMP_FISSION  = 29
+    EOB           = 30
 
 
 class ParticleDefinition:
@@ -330,7 +331,7 @@ class convertingRuleRelaxation(convertingRuleDefault):
         bmask, bshift = getBitMaskAndOffset(FLAGS_DEFAULT, 'fmask')
 
         # ZA
-        shell_id  = (ps_unformatted['flag'] & bmask >> bshift)
+        shell_id  = (ps_unformatted['flag'] & bmask) >> bshift
         za_target = np.digitize(shell_id, convertingRuleRelaxation.__shell_offset) - 1
         z         = convertingRuleRelaxation.__za_list[za_target]
         za        = z * 1000 + shell_id - convertingRuleRelaxation.__shell_offset[za_target]
