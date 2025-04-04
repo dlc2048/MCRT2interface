@@ -16,6 +16,7 @@ from copy import deepcopy
 from typing import Union
 
 import numpy as np
+import torch
 
 from rt2.fortran import Fortran, UnformattedFortran
 from rt2.particle import PID_TO_PNAME, DTYPE_PHASE_SPACE
@@ -31,6 +32,11 @@ class ENERGY_TYPE(Enum):
 class DENSITY_TYPE(Enum):
     DEPO = 0
     DOSE = 1
+
+
+class MESH_MEMORY_STRUCTURE(Enum):
+    DENSE      = 0
+    SPARSE_COO = 1
 
 
 class _TallyContext:
@@ -51,10 +57,17 @@ class _TallyContext:
         stream.write(self.unit)
 
     @staticmethod
-    def _readData(stream: Fortran):
+    def _readDenseData(stream: Fortran):
         data_1d = stream.read(np.float32)
         unc_1d  = stream.read(np.float32)
         return data_1d, unc_1d
+
+    @staticmethod
+    def _readCOOSparseData(stream: Fortran):
+        index_1d = torch.tensor(stream.read(np.int32)).unsqueeze(0)
+        data_1d  = torch.tensor(stream.read(np.float32))
+        unc_1d   = torch.tensor(stream.read(np.float32))
+        return index_1d, data_1d, unc_1d
 
     def _writeData(self, stream: Fortran):
         stream.write(self.data.flatten())
@@ -139,7 +152,8 @@ class _FilterContext:
 class _MeshContext(Affine):
     def __init__(self):
         Affine.__init__(self)
-        self._shape = np.empty(3, dtype=int)
+        self._shape            = np.empty(3, dtype=int)
+        self._memory_structure = MESH_MEMORY_STRUCTURE.DENSE
 
     def __repr__(self):
         message = ""
@@ -156,6 +170,8 @@ class _MeshContext(Affine):
         matrix = np.reshape(matrix_1d, (3, 4))
         matrix = np.append(matrix, np.array([[0, 0, 0, 1]]), axis=0)
         Affine.__init__(self, matrix)
+        structure_type = stream.read(np.int32)[0]
+        self._memory_structure = MESH_MEMORY_STRUCTURE(structure_type)
 
     def _writeGeometryInfo(self, stream: Fortran):
         shape = np.empty(3, dtype=np.int32)
@@ -415,11 +431,19 @@ class MeshTrack(_TallyContext, _FilterContext, _MeshContext, _FluenceContext):
         _MeshContext._readGeometryInfo(self, stream)
         _FluenceContext._readEnergyStructure(self, stream)
 
-        data_1d, err_1d = _TallyContext._readData(stream)
-        # Get dimension info
         shape = (self._shape[0], self._shape[1], self._shape[2], self._nbin)
-        self.data = data_1d.reshape(shape)
-        self.unc = err_1d.reshape(shape)
+
+        if self._memory_structure == MESH_MEMORY_STRUCTURE.DENSE:
+            data_1d, err_1d = _TallyContext._readDenseData(stream)
+            # Get dimension info
+            self.data = data_1d.reshape(shape)
+            self.unc = err_1d.reshape(shape)
+        elif self._memory_structure == MESH_MEMORY_STRUCTURE.SPARSE_COO:
+            index_1d, data_1d, err_1d = _TallyContext._readCOOSparseData(stream)
+            # convert it to torch
+            total_len = shape[0] * shape[1] * shape[2] * shape[3]
+            self.data = torch.sparse_coo_tensor(index_1d, data_1d, (total_len,))
+            self.unc = torch.sparse_coo_tensor(index_1d, err_1d, (total_len,))
 
         stream.close()
 
@@ -538,12 +562,21 @@ class MeshDensity(_TallyContext, _FilterContext, _MeshContext):
             _FilterContext._readFilter(self, stream)
             _MeshContext._readGeometryInfo(self, stream)
 
-            data_1d, err_1d = super()._readData(stream)
-            # Get dimension info
-            mesh = self.shape()
+            mesh  = self.shape()
             shape = (mesh[0], mesh[1], mesh[2])
-            self.data = data_1d.reshape(shape)
-            self.unc = err_1d.reshape(shape)
+
+            if self._memory_structure == MESH_MEMORY_STRUCTURE.DENSE:
+                data_1d, err_1d = _TallyContext._readDenseData(stream)
+                # Get dimension info
+                self.data = data_1d.reshape(shape)
+                self.unc  = err_1d.reshape(shape)
+            elif self._memory_structure == MESH_MEMORY_STRUCTURE.SPARSE_COO:
+                index_1d, data_1d, err_1d = _TallyContext._readCOOSparseData(stream)
+                # convert it to torch
+                total_len = shape[0] * shape[1] * shape[2]
+                self.data = torch.sparse_coo_tensor(index_1d, data_1d, (total_len,))
+                self.unc  = torch.sparse_coo_tensor(index_1d, err_1d,  (total_len,))
+
             stream.close()
 
     def __add__(self, other: Union[MeshDensity, float, int]):
@@ -650,7 +683,7 @@ class Cross(_TallyContext, _FilterContext, _FluenceContext):
             _FilterContext._readFilter(self, stream)
             _FluenceContext._readEnergyStructure(self, stream)
 
-            data_1d, err_1d = _TallyContext._readData(stream)
+            data_1d, err_1d = _TallyContext._readDenseData(stream)
             # Get dimension info
             shape = self._nbin
             self.data = data_1d.reshape(shape)
@@ -725,7 +758,7 @@ class Track(_TallyContext, _FilterContext, _FluenceContext):
         _FilterContext._readFilter(self, stream)
         _FluenceContext._readEnergyStructure(self, stream)
 
-        data_1d, err_1d = _TallyContext._readData(stream)
+        data_1d, err_1d = _TallyContext._readDenseData(stream)
         # Get dimension info
         shape = self._nbin
         self.data = data_1d.reshape(shape)
@@ -801,7 +834,7 @@ class Density(_TallyContext, _FilterContext):
         _TallyContext._readHeader(self, stream)
         _FilterContext._readFilter(self, stream)
 
-        data_1d, err_1d = _TallyContext._readData(stream)
+        data_1d, err_1d = _TallyContext._readDenseData(stream)
         # Get dimension info
         self.data = data_1d[0]
         self.unc  = err_1d[0]
@@ -971,7 +1004,7 @@ class Activation(_TallyContext, _FilterContext):
         # read ZA info
         self.za  = stream.read(np.int32)
 
-        data_1d, err_1d = _TallyContext._readData(stream)
+        data_1d, err_1d = _TallyContext._readDenseData(stream)
         # Get dimension info
         self.data = data_1d
         self.unc  = err_1d
