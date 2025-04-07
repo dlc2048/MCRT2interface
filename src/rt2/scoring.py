@@ -180,6 +180,9 @@ class _MeshContext(Affine):
         stream.write(shape)
         matrix = self.affine()[:-1].flatten()
         stream.write(matrix)
+        ms = np.empty(1, dtype=np.int32)
+        ms[0] = self._memory_structure.value
+        stream.write(ms)
 
     def _operatorCheck(self, other: Union[_MeshContext, float, int]):
         if isinstance(other, _MeshContext):
