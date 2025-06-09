@@ -74,6 +74,29 @@ class Reaction:
             trans /= egg[1:] - egg[:-1] if mf == 16 else egn[1:] - egn[:-1]  # 1/MeV
         return trans
 
+    def equiProbable(self, group_from: int, group_to: int, mf: int) -> np.ndarray:
+        if mf == 16:  # photon -> isotropic
+            return np.array([-1.0, 1.0])
+
+        cont = -1
+        for tape in self._stape:
+            if (tape & 31) == mf:
+                cont = tape >> 5
+                break
+        assert cont >= 0, 'Secondary table for "{}" not exist in reaction {}'.format(
+            SECONDARY_TYPE[mf], REACTION_TYPE[self.mt()]
+        )
+        egn = self._parent.neutronGroupStructure()
+        ngn = len(egn) - 1
+
+        gpos, glow, glen = self._parent._gcontrol[cont * ngn + group_from]
+
+        assert glen >= 1, 'Energy of incident neutron is lower than threshold'
+
+        eabin = self._parent._eabin[gpos:gpos + glen]
+        assert len(eabin) > group_to - glow >= 0, '"group_to" out of range'
+        return eabin[group_to - glow]
+
     def angularDistribution(self, group: int, mf: int) -> (np.ndarray, np.ndarray):
         if mf == 16:  # photon -> isotropic
             return np.array([-1.0, 1.0]), np.array([1.0])
@@ -539,4 +562,6 @@ class LibraryFactory:
         return [za, isomer, temperature, identifier]
 
 
-LibraryFactory.setLibrary()
+lib_list = LibraryFactory.getLibraryList()
+assert len(lib_list), 'At least one neutron library must be installed'
+LibraryFactory.setLibrary(lib_list[0])

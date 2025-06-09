@@ -52,6 +52,11 @@ out_file = "{}.vxl".format(out_file)
 ct = nib.load(nib_path)
 aff_mat = ct.affine * 0.1
 aff_mat[-1, -1] = 1.0
+
+# RAS to LPS
+tr = np.identity(4)
+aff_mat = tr.dot(aff_mat)
+
 aff = Affine(aff_mat)  # mm to cm
 
 

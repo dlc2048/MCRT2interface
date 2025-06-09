@@ -22,6 +22,7 @@ from rt2.fortran import Fortran, UnformattedFortran
 from rt2.particle import PID_TO_PNAME, DTYPE_PHASE_SPACE
 from rt2.algorithm import Slicer, Affine
 from rt2.print import fieldFormat, nameFormat
+from rt2.memory import _UnformattedVector
 
 
 class ENERGY_TYPE(Enum):
@@ -924,58 +925,13 @@ class Detector(Cross):
         return message
 
 
-class PhaseSpace:
-    def __init__(self, file_name: str = '', max_counts=-1):
-        self._capacity = 100
-        self._size     = 0
-        self._ps       = np.empty(self._capacity, dtype=DTYPE_PHASE_SPACE)
-        if file_name == '':
-            pass
-        else:
-            stream = UnformattedFortran(file_name, recl=36)
-            bytes_array = stream.read(0, max_counts)
-            stream.close()
-            ps_temp = np.frombuffer(bytes_array, dtype=DTYPE_PHASE_SPACE)
-            self.append(ps_temp)
-
-    def reserve(self, size: int):
-        if size > self._capacity:
-            ps_temp = self._ps
-            self._ps = np.empty(size, dtype=DTYPE_PHASE_SPACE)
-            self._ps[:self._capacity] = ps_temp[:self._capacity]
-            self._capacity = size
-
-    def resize(self, size: int):
-        if size > self._capacity:
-            self.reserve(size)
-        if size > self._size:
-            self._size = size
-
-    def data(self):
-        return self._ps[:self._size]
-
-    def append(self, arr: np.ndarray):
-        if arr.dtype != DTYPE_PHASE_SPACE:
-            raise ValueError("'arr' dtype must be 'DTYPE_PHASE_SPACE'")
-        arr_1d = arr.flatten()
-
-        while self._capacity < self._size + len(arr_1d):
-            self.reserve(self._capacity * 2)
-
-        len_origin = self._size
-        self.resize(len_origin + len(arr_1d))
-        self._ps[len_origin:self._size] = arr_1d
-        return
-
-    def write(self, file_name: str):
-        stream = UnformattedFortran(file_name, mode="w", recl=36)
-        stream.write(self.data())
-        stream.close()
+class PhaseSpace(_UnformattedVector):
+    _dtype = np.dtype(DTYPE_PHASE_SPACE)
 
     def summary(self):
         ps = self.data()
         total_weight = np.sum(ps['wee'])
-        total_count = len(ps)
+        total_count  = len(ps)
         message = ""
         message += fieldFormat("Total counts", total_count)
         message += fieldFormat("Total weights", total_weight)
@@ -990,9 +946,6 @@ class PhaseSpace:
             message += fieldFormat("weights", weight)
 
         return message
-
-    def __repr__(self):
-        return self.summary()
 
 
 class Activation(_TallyContext, _FilterContext):
