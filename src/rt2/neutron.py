@@ -25,6 +25,7 @@ class Reaction:
 
     def mt(self) -> int:
         return self._mt
+
     def resZA(self) -> int:
         return self._res_za
 
@@ -315,15 +316,20 @@ class Library:
     def __init__(self, file_name: str, read_header: bool = False):
         file = Fortran(file_name, mode='r')
         # header
-        self._za   = file.read(np.int32)[0]
-        self._isom = file.read(np.int32)[0]
-        self._temp = file.read(np.float32)[0]
-        self._sab  = file.read(np.uint8).tobytes().decode('utf-8')[:-1]
+        self._za      = file.read(np.int32)[0]
+        self._isom    = file.read(np.int32)[0]
+        self._temp    = file.read(np.float32)[0]
+        self._sab     = file.read(np.uint8).tobytes().decode('utf-8')[:-1]
+        self._fission = bool(file.read(np.int32)[0])
         # angle group
         agroup = file.read(np.int32)[0]
 
         if read_header:  # finish
             return
+
+        self._wee = None
+        if self._fission:
+            self._wee = file.read(np.float32)
 
         # get group number
         egn = Library.neutronGroupStructure()
@@ -379,8 +385,20 @@ class Library:
     def temperature(self) -> float:
         return self._temp
 
+    def fissionable(self) -> bool:
+        return self._fission
+
     def sab(self) -> str:
         return self._sab
+
+    def fweight(self, group: int = -1) -> np.ndarray | float:
+        if not self.fissionable():
+            return 0.0
+        else:
+            if group < 0:
+                return self._wee
+            else:
+                return self._wee[group]
 
     def xs(self, group: int = -1) -> np.ndarray | float:
         if group < 0:

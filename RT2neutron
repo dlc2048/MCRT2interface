@@ -348,6 +348,8 @@ def sampleCurrentTarget():
     print('{} channel (MT={}) is selected'.format(branch, branch.mt()))
     print('Local energy depo   : {:.5} MeV'.format(branch.deposition(group)))
     print('Local target remnant: {}'.format(remnant))
+    if lib.fissionable():
+        print('Fission multiplicity: {:.5}'.format(lib.fweight(group)))
     print('List of secondaries:')
     table = '{:>8} {:>14} {:>14}'
     print(table.format('Type', 'Energy [MeV]', 'Angle [Degree]'))
