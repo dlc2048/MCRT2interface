@@ -77,7 +77,7 @@ install(FILES
   "RT2neutron" 
   "RT2fsource_CMakeLists.txt" 
   "RT2fsource_template.cpp" 
-  DESTINATION RT2interface
+  DESTINATION ${INSTALL_ROOT}RT2interface
 )
 
 file(COPY "RT2fsource_template.cpp"   DESTINATION ${CMAKE_CURRENT_BINARY_DIR}

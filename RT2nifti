@@ -2,6 +2,7 @@
 
 from tqdm import tqdm
 import nibabel as nib
+import numpy as np
 
 from rt2.algorithm import Affine
 from rt2.prompt import Prompt
@@ -50,12 +51,14 @@ out_file = "{}.vxl".format(out_file)
 
 # CT dataset
 ct = nib.load(nib_path)
-aff_mat = ct.affine * 0.1
-aff_mat[-1, -1] = 1.0
 
 # RAS to LPS
-tr = np.identity(4)
-aff_mat = tr.dot(aff_mat)
+ornt = np.array([
+    [0, -1],
+    [1, -1],
+    [2, 1],
+])
+aff_mat = ct.as_reoriented(ornt).affine * 0.1
 
 aff = Affine(aff_mat)  # mm to cm
 
