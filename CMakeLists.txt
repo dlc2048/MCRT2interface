@@ -78,6 +78,10 @@ install(FILES
   "RT2fsource_CMakeLists.txt" 
   "RT2fsource_template.cpp" 
   DESTINATION ${INSTALL_ROOT}RT2interface
+  FILE_PERMISSIONS 
+  OWNER_READ OWNER_WRITE
+  GROUP_READ
+  WORLD_READ
 )
 
 file(COPY "RT2fsource_template.cpp"   DESTINATION ${CMAKE_CURRENT_BINARY_DIR}
