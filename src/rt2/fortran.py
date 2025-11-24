@@ -15,13 +15,13 @@ class Fortran:
         self._file.seek(0)
 
     def read(self, dtype):
-        seg = self._file.read(8)
+        seg = self._file.read(4)
         if not seg:
             return seg  # EOF
-        blen1 = np.frombuffer(seg, dtype=np.int64)[0]
+        blen1 = np.frombuffer(seg, dtype=np.int32)[0]
         buffer = self._file.read(blen1)
-        seg = self._file.read(8)
-        blen2 = np.frombuffer(seg, dtype=np.int64)[0]
+        seg = self._file.read(4)
+        blen2 = np.frombuffer(seg, dtype=np.int32)[0]
 
         if blen1 != blen2:
             raise ValueError
@@ -43,7 +43,7 @@ class Fortran:
             bs = ndarray.flatten().tobytes()
 
         length = len(bs)
-        blen = np.array([length], dtype=np.int64).tobytes()
+        blen = np.array([length], dtype=np.int32).tobytes()
         self._file.write(blen)
         self._file.write(bs)
         self._file.write(blen)
