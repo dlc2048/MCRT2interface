@@ -30,6 +30,20 @@ class FLAGS_NEUTRON_S(ctypes.Structure):
     ]
 
 
+class FLAGS_PNEUTRON_RT(ctypes.Structure):
+    _fields_ = [
+        ("region", ctypes.c_uint16, 16),
+        ("fmask" , ctypes.c_uint16, 16)
+    ]
+
+
+class FLAGS_PNEUTRON_NR(ctypes.Structure):
+    _fields_ = [
+        ("region" , ctypes.c_uint16, 16),
+        ("rea_idx", ctypes.c_uint16, 16)
+    ]
+
+
 class FLAGS_GENION(ctypes.Structure):
     _fields_ = [
         ("region" , ctypes.c_uint16, 16),
