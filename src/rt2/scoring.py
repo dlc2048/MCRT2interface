@@ -65,9 +65,12 @@ class _TallyContext:
 
     @staticmethod
     def _readCOOSparseData(stream: Fortran):
+
+        flag_unc = stream.read(np.int32)[0]
+        
         index_1d = torch.tensor(stream.read(np.int32)).unsqueeze(0)
         data_1d  = torch.tensor(stream.read(np.float32))
-        unc_1d   = torch.tensor(stream.read(np.float32))
+        unc_1d   = torch.tensor(stream.read(np.float32)) if flag_unc else None
         return index_1d, data_1d, unc_1d
 
     def _writeData(self, stream: Fortran):
@@ -447,7 +450,10 @@ class MeshTrack(_TallyContext, _FilterContext, _MeshContext, _FluenceContext):
             # convert it to torch
             total_len = shape[0] * shape[1] * shape[2] * shape[3]
             self.data = torch.sparse_coo_tensor(index_1d, data_1d, (total_len,))
-            self.unc = torch.sparse_coo_tensor(index_1d, err_1d, (total_len,))
+            if err_1d is not None:
+                self.unc = torch.sparse_coo_tensor(index_1d, err_1d, (total_len,))
+            else:
+                self.unc = None
 
         stream.close()
 
@@ -579,7 +585,10 @@ class MeshDensity(_TallyContext, _FilterContext, _MeshContext):
                 # convert it to torch
                 total_len = shape[0] * shape[1] * shape[2]
                 self.data = torch.sparse_coo_tensor(index_1d, data_1d, (total_len,))
-                self.unc  = torch.sparse_coo_tensor(index_1d, err_1d,  (total_len,))
+                if err_1d is not None:
+                    self.unc = torch.sparse_coo_tensor(index_1d, err_1d, (total_len,))
+                else:
+                    self.unc = None
 
             stream.close()
 
