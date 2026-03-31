@@ -472,9 +472,9 @@ class Library:
 
 class LibraryFactory:
 
-    __library   = ''
+    __library   = 'endf7R0_260'
     __cdata_key = ''
-    __home      = os.path.join(os.environ['MCRT2_HOME'], os.path.join('resource', 'neutron'))
+    __home      = os.path.join(os.environ['MCRT2_HOME'], os.path.join('resource', 'neutron', 'groupwised'))
     __header    = []
     __cache     = {}
 

@@ -99,6 +99,7 @@ namespace mcutil {
 		P_NEU_COH,       // pointwised neutron reaction bucket, coherent elastic
 		P_NEU_INCOH,     // pointwised neutron reaction bucket, incoherent inelastic
 		P_NEU_GAMMA,     // pointwised neutron gamma bucket
+		P_NEU_DEPO,      // pointwised neutron absorption event bucket
 		DELTA,           // generic ion delta
 		ION_NUCLEAR,     // Nucleus-nucleus inelastic (determine isotope target & rejection)
 		// ion-nuclear models
@@ -159,11 +160,12 @@ namespace mcutil {
 	class BufferProperty {
 	private:
 		std::string _name;
-		size_t      _importance;
-		bool        _use_za_data;
+		size_t _importance;
+		bool   _use_za_data;
 		std::set<BUFFER_TYPE> _parent_kernel;
 		BUFFER_KERNEL_LAUNCH_STRUCTURE _kernel_structure;
 		BUFFER_KERNEL_PHYSICS_PROPERTY _kernel_physics;
+		bool _use_direction;
 		
 
 	public:
@@ -174,7 +176,8 @@ namespace mcutil {
 			_name(""),
 			_use_za_data(false),
 			_kernel_structure(BUFFER_KERNEL_LAUNCH_STRUCTURE::VIRTUAL),
-			_kernel_physics(BUFFER_KERNEL_PHYSICS_PROPERTY::SOURCE) {}
+			_kernel_physics(BUFFER_KERNEL_PHYSICS_PROPERTY::SOURCE),
+		    _use_direction(true) {}
 
 
 		BufferProperty(
@@ -182,13 +185,15 @@ namespace mcutil {
 			size_t importance,
 			bool use_za,
 			BUFFER_KERNEL_LAUNCH_STRUCTURE  kernel_structure,
-			BUFFER_KERNEL_PHYSICS_PROPERTY kernel_physics
+			BUFFER_KERNEL_PHYSICS_PROPERTY  kernel_physics,
+			bool use_direction = true
 		) :
 			_name(name),
 			_importance(importance),
 			_use_za_data(use_za),
 			_kernel_structure(kernel_structure),
-			_kernel_physics(kernel_physics) {}
+			_kernel_physics(kernel_physics),
+		    _use_direction(use_direction) {}
 
 
 		void setParentBuffer(BUFFER_TYPE parent) {
@@ -212,6 +217,9 @@ namespace mcutil {
 
 
 		BUFFER_KERNEL_PHYSICS_PROPERTY physicsType() const { return this->_kernel_physics; }
+
+
+		bool useDirection() const { return this->_use_direction; }
 
 
 	};

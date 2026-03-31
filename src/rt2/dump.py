@@ -60,25 +60,26 @@ class BUFFER_TYPE(enum.Enum):
     P_NEU_COH = 34
     P_NEU_INCOH = 35
     P_NEU_GAMMA = 36
-    DELTA = 37
-    ION_NUCLEAR = 38
-    BME = 39
-    QMD_000_032 = 40
-    QMD_033_064 = 41
-    QMD_065_096 = 42
-    QMD_097_128 = 43
-    QMD_129_160 = 44
-    QMD_161_192 = 45
-    QMD_193_224 = 46
-    QMD_225_256 = 47
-    QMD_257_288 = 48
-    CN_FORMATION = 49
-    ABRASION = 50
-    NUC_SECONDARY = 51
-    DEEXCITATION = 52
-    PHOTON_EVAP = 53
-    COMP_FISSION = 54
-    EOB = 55
+    P_NEU_DEPO = 37
+    DELTA = 38
+    ION_NUCLEAR = 39
+    BME = 40
+    QMD_000_032 = 41
+    QMD_033_064 = 42
+    QMD_065_096 = 43
+    QMD_097_128 = 44
+    QMD_129_160 = 45
+    QMD_161_192 = 46
+    QMD_193_224 = 47
+    QMD_225_256 = 48
+    QMD_257_288 = 49
+    CN_FORMATION = 50
+    ABRASION = 51
+    NUC_SECONDARY = 52
+    DEEXCITATION = 53
+    PHOTON_EVAP = 54
+    COMP_FISSION = 55
+    EOB = 56
 
 
 class ParticleDefinition:
@@ -113,6 +114,7 @@ class convertingRuleDefault(ParticleDefinition):
         ps_formatted['x']      = ps_unformatted['x']
         ps_formatted['y']      = ps_unformatted['y']
         ps_formatted['z']      = ps_unformatted['z']
+        ps_formatted['flags']  = ps_unformatted['flag']
         ps_formatted['wee']    = ps_unformatted['wee']
         ps_formatted['hid']    = ps_unformatted['hid']
         ps_formatted['region'] = (ps_unformatted['flag'] & bmask) >> bshift
@@ -194,6 +196,38 @@ class convertingRulePGamma(convertingRuleDefault):
         norm = ps_unformatted['u']**2 + ps_unformatted['v']**2
         norm[norm > 1.0] = 1.0
         ps_unformatted['w'] = np.copysign(np.sqrt(1.0 - norm), ps_unformatted['w'])
+
+        self._cvtDirectionToMomentum(ps_formatted, ps_unformatted, eke)
+
+        return ps_formatted
+
+
+class convertingRulePDepo(convertingRuleDefault):
+    def __init__(self, target: int):
+        super().__init__(target, 0, 1, const.MASS_NEUTRON)
+
+    def convert(self, ps_unformatted: np.ndarray):
+        assert (np.all(ps_unformatted['type'] == self._transform_target))
+        ps_formatted = np.empty(ps_unformatted.shape, dtype=PDEF_DTYPE)
+
+        self._inheritCommonMember(ps_formatted, ps_unformatted)
+
+        # using direction element, fixed mass
+        ps_formatted['exc'] = 0.0
+
+        # set mass & ZA
+        z = self.z()
+        a = self.a()
+        ps_formatted['mass'] = self.mass()
+        ps_formatted['za'] = z * 1000 + a
+
+        # kinetic energy
+        eke = ps_unformatted['e']
+
+        # reconstruct direction z
+        ps_unformatted['u'] = 1.0
+        ps_unformatted['v'] = 1.0
+        ps_unformatted['w'] = 1.0
 
         self._cvtDirectionToMomentum(ps_formatted, ps_unformatted, eke)
 
@@ -437,6 +471,7 @@ FORMAT_RULE = {
     BUFFER_TYPE.P_NEU_COH       : convertingRuleDefault(BUFFER_TYPE.P_NEU_COH.value  , +0, +1, const.MASS_NEUTRON),
     BUFFER_TYPE.P_NEU_INCOH     : convertingRuleDefault(BUFFER_TYPE.P_NEU_INCOH.value, +0, +1, const.MASS_NEUTRON),
     BUFFER_TYPE.P_NEU_GAMMA     : convertingRulePGamma(BUFFER_TYPE.P_NEU_GAMMA.value),
+    BUFFER_TYPE.P_NEU_DEPO      : convertingRulePDepo(BUFFER_TYPE.P_NEU_DEPO.value),
     BUFFER_TYPE.DELTA           : convertingRuleGenion(BUFFER_TYPE.DELTA.value),
     BUFFER_TYPE.ION_NUCLEAR     : convertingRuleGenion(BUFFER_TYPE.ION_NUCLEAR.value),
     BUFFER_TYPE.BME             : convertingRuleINC(BUFFER_TYPE.BME.value),
@@ -465,6 +500,7 @@ PDEF_DTYPE = [
     ('target', np.int32),
     ('region', np.int32),
     ('hid'   , np.int32),
+    ('flags' , np.uint32),
     ('wee'   , np.float64),
     ('x'     , np.float64),
     ('y'     , np.float64),
