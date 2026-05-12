@@ -21,15 +21,16 @@ from rt2.print import fieldFormat, nameFormat
 
 
 DTYPE_BEAMLET = [
-    ('x',   'float32'),
-    ('y',   'float32'),
-    ('z',   'float32'),
-    ('u',   'float32'),
-    ('v',   'float32'),
-    ('w',   'float32'),
-    ('wee', 'float32'),
-    ('e',   'float32'),
-    ('sig', 'float32')
+    ('x',    'float32'),
+    ('y',    'float32'),
+    ('z',    'float32'),
+    ('u',    'float32'),
+    ('v',    'float32'),
+    ('w',    'float32'),
+    ('wee',  'float32'),
+    ('emin', 'float32'),
+    ('emax', 'float32'),
+    ('sig',  'float32')
 ]
 
 
