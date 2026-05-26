@@ -5,6 +5,7 @@ from copy import deepcopy
 
 import numpy as np
 import nibabel as nib
+import nrrd
 
 from rt2.algorithm import Slicer, Affine
 from rt2.scoring import _MeshContext
@@ -13,26 +14,42 @@ from rt2.fortran import Fortran
 
 class Voxel(_MeshContext):
 
-    def __init__(self, file_name: str | None = None,
-                 image: nib.filebasedimages | None = None,
-                 shape: np.ndarray | Iterable | None = None):
-
+    def __init__(self, shape: Iterable | None = None):
         _MeshContext.__init__(self)
 
         self._region = []
-        self._data = np.empty(0, dtype=np.uint16)
-
-        if file_name is not None:
-            self._read(file_name)
-        elif image is not None:
-            self._data = image.get_fdata()
-            self._shape = np.array(self._data.shape, dtype=int)
-            self.transform(Affine(image.affine))
-            self.scale(0.1, 0.1, 0.1)  # to cm
+        if shape is None:
+            self.data = np.empty(0)
         else:
-            for i in range(3):
-                self._shape[i] = shape[i]
-            self._data = np.ones(self._shape, dtype=np.uint16) * np.iinfo('uint16').max
+            self.data = np.ones(shape, dtype=np.uint16) * np.iinfo(np.uint16).max
+
+    @classmethod
+    def fromRT2Voxel(cls, file_name: str):
+        return cls()._read(file_name)
+
+    @classmethod
+    def fromNIFTI(cls, file_name: str):
+        res    = cls()
+        nf_img = nib.load(file_name)
+        res.data   = nf_img.get_fdata()
+        res._shape = np.array(res.data.shape, dtype=int)
+        res.transform(Affine(nf_img.affine))
+        res.scale(0.1, 0.1, 0.1)  # to cm
+        return res
+
+    @classmethod
+    def fromNRRD(cls, file_name: str):
+        res = cls()
+        label, header = nrrd.read(file_name)
+        res.data   = label[:]
+        res._shape = res.data.shape
+        aff = np.identity(4)
+        aff[:3, :3] = header['space directions']
+        aff[:3, 3]  = header['space origin']
+        res.transform(Affine(aff))
+        res.scale(0.1, 0.1, 0.1)  # to cm
+
+        return res
 
     def __setitem__(self, key, value):
         if isinstance(value, str):
@@ -71,9 +88,6 @@ class Voxel(_MeshContext):
             name_byte = stream.read(np.byte).tostring()
             self._region += [name_byte.decode('utf-8')]
         stream.close()
-
-    def data(self) -> np.ndarray:
-        return np.copy(self._data)
 
     def shape(self) -> tuple:
         return tuple(self._shape)
@@ -146,7 +160,7 @@ class Voxel(_MeshContext):
         if not self.axisAligned():
             raise AttributeError("Cannot transpose since voxel is not axis-aligned")
 
-        self._data = np.transpose(self._data, axes=axes)
+        self.data   = np.transpose(self.data, axes=axes)
         self._shape = self._shape[np.array(axes)]
 
         mat = self.affine()
@@ -169,7 +183,7 @@ class Voxel(_MeshContext):
         idx1[axis] += self._shape[axis] - 1
         pos0 = self.where(idx0[0], idx0[1], idx0[2])
         pos1 = self.where(idx1[0], idx1[1], idx1[2])
-        self._data = np.flip(self._data, axis=axis)
+        self.data = np.flip(self._data, axis=axis)
         self._matrix[:, axis] = -self._matrix[:, axis]
         self.translate(pos1[0] - pos0[0], pos1[1] - pos0[1], pos1[2] - pos0[2])
 
@@ -198,7 +212,7 @@ class Voxel(_MeshContext):
         :return: 2-D value image (np.ndarray), 2-D uncertainty image (np.ndarray), extent (tuple)
         """
         slicer, extent = self._imageSlice(pos, axis)
-        img_val = self.data()[slicer]
+        img_val = self.data[slicer]
 
         if axis == 1:  # Permutation
             img_val = np.transpose(img_val)
